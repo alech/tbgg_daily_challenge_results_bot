@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from typing import Any
 
 from conftest import entry, guess, payload
@@ -16,6 +15,18 @@ TOTAL_LIMIT = 6000
 
 def _embed_dict(data: dict[str, Any], date_str: str = "2026-09-16") -> dict[str, Any]:
     return build_embed(scoring.compute(data, date_str)).to_dict()
+
+
+def _discord_length(embed: dict[str, Any]) -> int:
+    """Count characters the way Discord does when enforcing the 6000 per-message cap.
+
+    It sums the text of title, description, every field name and value, footer and author —
+    not the serialised JSON, whose keys, quoting and \\uXXXX escapes inflate the figure.
+    """
+    total = len(embed.get("title", "")) + len(embed.get("description", ""))
+    total += sum(len(f["name"]) + len(f["value"]) for f in embed.get("fields", []))
+    total += len(embed.get("footer", {}).get("text", ""))
+    return total + len(embed.get("author", {}).get("name", ""))
 
 
 def test_the_embed_reports_the_team_total_and_the_day(three_players: dict[str, Any]) -> None:
@@ -34,13 +45,42 @@ def test_a_full_club_of_long_nicknames_stays_within_discord_limits() -> None:
     assert len(embed["description"]) <= DESCRIPTION_LIMIT
     for field in embed["fields"]:
         assert len(field["value"]) <= FIELD_VALUE_LIMIT
-    assert len(json.dumps(embed)) <= TOTAL_LIMIT
+    assert _discord_length(embed) <= TOTAL_LIMIT
 
 
-def test_a_club_larger_than_the_shown_leaderboard_says_how_many_were_hidden() -> None:
+def test_a_large_club_is_split_across_fields_rather_than_truncated() -> None:
+    # long nicknames so the leaderboard genuinely exceeds one 1024-character field
+    data = payload(*(entry(f"LongNickname{i:02d}", [guess(5000 - i)] * 5) for i in range(40)))
+    embed = _embed_dict(data)
+
+    leaderboard = "".join(f["value"] for f in embed["fields"])
+    for i in range(40):
+        assert f"LongNickname{i:02d}" in leaderboard, "every player must appear somewhere"
+    assert len(embed["fields"]) > 1, "this leaderboard cannot fit in one field"
+    for field in embed["fields"]:
+        assert len(field["value"]) <= FIELD_VALUE_LIMIT
+    assert _discord_length(embed) <= TOTAL_LIMIT
+
+
+def test_a_forty_player_club_with_short_names_still_fits_one_field() -> None:
     data = payload(*(entry(f"P{i:02d}", [guess(5000 - i)] * 5) for i in range(40)))
-    leaderboard = _embed_dict(data)["fields"][0]["value"]
-    assert "and 15 more" in leaderboard
+    embed = _embed_dict(data)
+
+    assert len(embed["fields"]) == 1
+    for i in range(40):
+        assert f"P{i:02d}" in embed["fields"][0]["value"]
+
+
+def test_a_realistic_club_all_tying_on_a_round_names_everyone() -> None:
+    # 12 players tie on 5000 on round 1 — well within the 4096-char description budget
+    data = payload(
+        *(entry(f"Player{i:02d}", [guess(5000), guess(4000 - i)] * 1) for i in range(12))
+    )
+    description = _embed_dict(data)["description"]
+
+    assert "more tied" not in description, "nobody should be summarised away at this size"
+    for i in range(12):
+        assert f"Player{i:02d}" in description
 
 
 def test_tied_winners_appear_on_their_own_rows_without_repeating_the_score(
@@ -51,14 +91,24 @@ def test_tied_winners_appear_on_their_own_rows_without_repeating_the_score(
     assert "Alice" in table and "Bob" in table
 
 
-def test_a_round_the_whole_club_tied_on_is_summarised_not_listed_in_full() -> None:
-    # 40 players all scoring 5000 on every round would otherwise be 200 table rows
+def test_an_extreme_tie_is_summarised_only_once_discord_forces_it() -> None:
+    # 40 players scoring 5000 on all 5 rounds is 200 table rows; that genuinely cannot fit
     data = payload(*(entry(f"Player{i:02d}", [guess(5000)] * 5) for i in range(40)))
     embed = _embed_dict(data)
 
-    assert "+37 more tied" in embed["description"]
+    assert "more tied" in embed["description"]
     assert len(embed["description"]) <= DESCRIPTION_LIMIT
-    assert len(json.dumps(embed)) <= TOTAL_LIMIT
+    assert _discord_length(embed) <= TOTAL_LIMIT
+
+
+def test_the_table_uses_the_description_budget_rather_than_a_fixed_cap() -> None:
+    # 8 players tied on one round fit easily and must all be named
+    few = payload(*(entry(f"Nick{i}", [guess(5000)]) for i in range(8)))
+    assert "more tied" not in _embed_dict(few)["description"]
+
+    # the same 8 with 40-character names still fit; the cap is length, not headcount
+    long_names = payload(*(entry(f"Player{i}" + "x" * 32, [guess(5000)]) for i in range(8)))
+    assert "more tied" not in _embed_dict(long_names)["description"]
 
 
 def test_the_leaderboard_shows_each_player_s_5k_count() -> None:

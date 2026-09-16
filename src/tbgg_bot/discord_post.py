@@ -18,20 +18,22 @@ LOGGER = logging.getLogger(__name__)
 EMBED_COLOUR = 0x4FAE4F
 MEDAL_EMOJI = {"Gold": "🥇", "Silver": "🥈", "Bronze": "🥉"}
 
-MAX_STANDINGS_SHOWN = 25
-MAX_WINNERS_PER_ROUND = 3
+# Discord's own limits. Everyone who scored should be named, so these drive the layout
+# instead of arbitrary caps: omitting a player who tied for a round reads as a slight.
+DESCRIPTION_LIMIT = 4096
+FIELD_VALUE_LIMIT = 1024
+MAX_FIELDS = 25
+# Discord also caps the *sum* of title, description, field names and values, and footer
+# across the whole message, so the table and the leaderboard compete for one pool.
+TOTAL_LIMIT = 6000
+# Kept back from the leaderboard so the round table always has room for a usable form.
+MIN_TABLE_BUDGET = 500
 FENCE_OVERHEAD = len("```\n\n```")
-# Discord caps a field value at 1024 characters and the description at 4096.
-STANDINGS_BUDGET = 1024 - FENCE_OVERHEAD
 
 
-def _table(rounds: tuple[RoundBest, ...]) -> str:
-    """An aligned monospace table of the best guess on each round.
-
-    An easy round can leave a whole club tied on 5000, so only the first few tied
-    winners get a row and the rest are summarised.
-    """
-    shown = {r.number: r.winners[:MAX_WINNERS_PER_ROUND] for r in rounds}
+def _table(rounds: tuple[RoundBest, ...], cap: int) -> str:
+    """An aligned monospace table of the best guess on each round, naming up to `cap` ties."""
+    shown = {r.number: r.winners[:cap] for r in rounds}
     nick_width = max((len(w.nick) for winners in shown.values() for w in winners), default=6)
     lines = [f"{'R':<2} {'Cty':<4} {'Score':>5}  {'Distance':>9}  {'Time':>5}  Player"]
     for info in rounds:
@@ -50,34 +52,65 @@ def _table(rounds: tuple[RoundBest, ...]) -> str:
     return "\n".join(lines)
 
 
+def _fit_table(rounds: tuple[RoundBest, ...], budget: int) -> str:
+    """Name as many tied winners as the description budget allows.
+
+    Ties are normal on an easy round and every tied player earned their mention, so the
+    only thing that trims the list is Discord's 4096-character description limit.
+    """
+    widest = max((len(r.winners) for r in rounds), default=1)
+    for cap in range(widest, 1, -1):
+        table = _table(rounds, cap)
+        if len(table) <= budget:
+            return table
+    return _table(rounds, 1)
+
+
 def _fives(standing: Standing) -> str:
     """A player's 5k count, or blank if they had none."""
     return f"{standing.perfect_rounds}x5k" if standing.perfect_rounds else ""
 
 
-def _render_standings(standings: tuple[Standing, ...], count: int) -> str:
-    shown = standings[:count]
-    nick_width = max((len(s.nick) for s in shown), default=6)
+def _standings_lines(standings: tuple[Standing, ...]) -> list[str]:
+    """One aligned row per player, with widths shared across the whole leaderboard."""
+    rank_width = len(str(len(standings)))
+    nick_width = max((len(s.nick) for s in standings), default=6)
     # A player with no 5k gets blank space rather than a distracting "0x5k".
-    fives_width = max((len(_fives(s)) for s in shown), default=0)
-    lines = [
-        f"{rank:>2}. {s.nick:<{nick_width}}  {s.score:>6,}  "
+    fives_width = max((len(_fives(s)) for s in standings), default=0)
+    return [
+        f"{rank:>{rank_width}}. {s.nick:<{nick_width}}  {s.score:>6,}  "
         f"{_fives(s):>{fives_width}} {MEDAL_EMOJI.get(s.medal or '', '')}".rstrip()
-        for rank, s in enumerate(shown, start=1)
+        for rank, s in enumerate(standings, start=1)
     ]
-    if len(standings) > count:
-        lines.append(f"    ... and {len(standings) - count} more")
-    return "\n".join(lines)
 
 
-def _standings_block(standings: tuple[Standing, ...]) -> str:
-    """An aligned monospace list of the day's totals, trimmed to fit Discord's field limit."""
-    start = min(len(standings), MAX_STANDINGS_SHOWN)
-    for count in range(start, 1, -1):
-        block = _render_standings(standings, count)
-        if len(block) <= STANDINGS_BUDGET:
-            return block
-    return _render_standings(standings, 1)
+def _standings_blocks(standings: tuple[Standing, ...], total_budget: int) -> list[str]:
+    """Split the leaderboard over as many fields as it takes to name every player.
+
+    A field value caps at 1024 characters but an embed allows 25 fields, so the binding
+    constraint is the shared message budget rather than the per-field one.
+    """
+    per_field = FIELD_VALUE_LIMIT - FENCE_OVERHEAD
+    blocks: list[str] = []
+    current: list[str] = []
+    spent = 0
+
+    for line in _standings_lines(standings):
+        candidate = [*current, line]
+        if current and len("\n".join(candidate)) > per_field:
+            blocks.append("\n".join(current))
+            spent += len(blocks[-1]) + FENCE_OVERHEAD
+            current = [line]
+        else:
+            current = candidate
+        if len(blocks) >= MAX_FIELDS or spent + len("\n".join(current)) > total_budget:
+            break
+
+    if current and len(blocks) < MAX_FIELDS:
+        block = "\n".join(current)
+        if spent + len(block) + FENCE_OVERHEAD <= total_budget:
+            blocks.append(block)
+    return blocks
 
 
 def build_embed(result: TeamResult) -> discord.Embed:
@@ -86,26 +119,39 @@ def build_embed(result: TeamResult) -> discord.Embed:
     route = " ".join(flag(r.country) for r in result.rounds)
     solo = result.solo_best
 
-    summary = (
+    header = (
         f"**{result.team_total:,}** / {result.max_total:,} · {percentage:.2f}%\n"
         f"Best solo **{solo.score:,}** ({solo.nick}) · "
         f"team gain **+{result.gain_over_solo:,}**\n\n"
         f"{route}\n"
-        f"```\n{_table(result.rounds)}\n```"
+    )
+    title = f"🌍 TBGG Daily Challenge — {result.date}"
+    perfect = sum(1 for r in result.rounds if r.score == MAX_ROUND_SCORE)
+    footer = f"{perfect}/{len(result.rounds)} rounds maxed by the team"
+    plural = "s" if result.player_count != 1 else ""
+    first_name = f"Leaderboard ({result.player_count} player{plural})"
+
+    # The whole message shares one 6000-character pool. Spend it on the leaderboard first,
+    # holding back enough for the table, then give the table whatever is left over.
+    fixed = len(title) + len(footer) + len(header) + FENCE_OVERHEAD + len(first_name)
+    blocks = _standings_blocks(result.standings, TOTAL_LIMIT - fixed - MIN_TABLE_BUDGET)
+    spent = sum(len(b) + FENCE_OVERHEAD for b in blocks)
+    table = _fit_table(
+        result.rounds,
+        min(DESCRIPTION_LIMIT - len(header) - FENCE_OVERHEAD, TOTAL_LIMIT - fixed - spent),
     )
 
     embed = discord.Embed(
-        title=f"🌍 TBGG Daily Challenge — {result.date}",
-        description=summary,
-        colour=EMBED_COLOUR,
+        title=title, description=f"{header}```\n{table}\n```", colour=EMBED_COLOUR
     )
-    embed.add_field(
-        name=f"Leaderboard ({result.player_count} player{'s' if result.player_count != 1 else ''})",
-        value=f"```\n{_standings_block(result.standings)}\n```",
-        inline=False,
-    )
-    perfect = sum(1 for r in result.rounds if r.score == MAX_ROUND_SCORE)
-    embed.set_footer(text=f"{perfect}/{len(result.rounds)} rounds maxed by the team")
+    for index, block in enumerate(blocks):
+        embed.add_field(
+            # A zero-width space: a continued block needs no second heading.
+            name=first_name if index == 0 else "​",
+            value=f"```\n{block}\n```",
+            inline=False,
+        )
+    embed.set_footer(text=footer)
     return embed
 
 
