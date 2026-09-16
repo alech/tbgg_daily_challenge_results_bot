@@ -163,3 +163,8 @@ The optional `date` overrides the target day; omit the payload to use yesterday.
   missing, CDK falls back to the Lambda build image — set `CDK_DOCKER=finch` to use Finch,
   and start the VM first with `finch vm start`.
 - The GeoGuessr API is undocumented and unofficial; endpoints can change without notice.
+
+## License
+
+[CC0 1.0 Universal](LICENSE) — dedicated to the public domain. Do whatever you like with it,
+no attribution required.
