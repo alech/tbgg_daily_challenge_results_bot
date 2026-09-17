@@ -27,7 +27,7 @@ LOGGER.setLevel(logging.INFO)
 
 GEOGUESSR_PREFIX_ENV = "GEOGUESSR_PARAM_PREFIX"
 DISCORD_TOKEN_PARAM_ENV = "DISCORD_TOKEN_PARAM"
-CHANNEL_ENV = "DISCORD_CHANNEL_ID"
+CHANNEL_ENV = "DISCORD_CHANNEL_IDS"
 ALERT_USER_ENV = "DISCORD_ALERT_USER_ID"
 
 ALERT_COLOUR = 0xD9534F
@@ -66,6 +66,15 @@ def _required_id(name: str) -> int:
     return int(raw)
 
 
+def _channel_ids() -> list[int]:
+    """The channels to post to, as a comma-separated list of IDs."""
+    raw = os.environ.get(CHANNEL_ENV, "")
+    ids = [int(part) for part in (p.strip() for p in raw.split(",")) if part]
+    if not ids:
+        raise ValueError(f"{CHANNEL_ENV} is not set")
+    return ids
+
+
 def _alert(token: str, title: str, description: str) -> None:
     """DM the maintainer. Never posts to the club channel."""
     embed = discord.Embed(title=title, description=description, colour=ALERT_COLOUR)
@@ -89,7 +98,22 @@ def run(date_str: str) -> None:
             f"{REFRESH_HELP}",
         )
         raise
-    discord_post.post(token, _required_id(CHANNEL_ENV), discord_post.build_embed(result))
+
+    outcome = discord_post.post(token, _channel_ids(), discord_post.build_embed(result))
+    if outcome.failed:
+        # Getting the result out to the channels that do work matters more than a clean run,
+        # so a refused channel is reported privately rather than aborting the post.
+        detail = "\n".join(f"<#{cid}> — `{reason}`" for cid, reason in outcome.failed)
+        _alert(
+            token,
+            f"📪 Could not post to every channel — {date_str}",
+            f"Delivered to {len(outcome.posted)} of "
+            f"{len(outcome.posted) + len(outcome.failed)} channels.\n\n{detail}\n\n"
+            "Usually this means the bot has not been invited to that server, or lacks "
+            "**View Channel** / **Send Messages** / **Embed Links** there.",
+        )
+    if outcome.all_failed:
+        raise RuntimeError(f"No channel accepted the result for {date_str}")
 
 
 def check_cookie() -> bool:

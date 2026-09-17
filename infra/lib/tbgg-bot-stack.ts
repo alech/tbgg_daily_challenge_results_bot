@@ -9,8 +9,8 @@ import { Construct } from 'constructs';
 import { handlerCode } from './bundling';
 
 export interface TbggBotStackProps extends cdk.StackProps {
-  /** Discord channel the daily result is posted to. */
-  readonly discordChannelId: string;
+  /** Comma-separated Discord channels the daily result is posted to. */
+  readonly discordChannelIds: string;
   /** Discord user who receives failure and cookie-expiry DMs. */
   readonly discordAlertUserId: string;
   /** Absolute path to the Python project root. */
@@ -66,7 +66,7 @@ export class TbggBotStack extends cdk.Stack {
       environment: {
         GEOGUESSR_PARAM_PREFIX: GEOGUESSR_PREFIX,
         DISCORD_TOKEN_PARAM: DISCORD_TOKEN_PARAM,
-        DISCORD_CHANNEL_ID: props.discordChannelId,
+        DISCORD_CHANNEL_IDS: props.discordChannelIds,
         DISCORD_ALERT_USER_ID: props.discordAlertUserId,
       },
     });

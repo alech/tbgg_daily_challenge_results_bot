@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
-from typing import Any
+from types import SimpleNamespace
+from typing import Any, ClassVar
+
+import discord
+import pytest
 
 from conftest import entry, guess, payload
-from tbgg_bot import scoring
+from tbgg_bot import discord_post, scoring
 from tbgg_bot.discord_post import build_embed
 
 DESCRIPTION_LIMIT = 4096
@@ -147,3 +151,96 @@ def test_the_footer_counts_rounds_the_team_maxed(three_players: dict[str, Any]) 
 def test_a_single_player_day_is_not_pluralised() -> None:
     data = payload(entry("Solo", [guess(4000)] * 5))
     assert "1 player)" in _embed_dict(data)["fields"][0]["name"]
+
+
+class _FakeHttp:
+    """Records sends, refusing the channels named in `reject` the way Discord would."""
+
+    def __init__(self, reject: set[int]) -> None:
+        self.reject = reject
+        self.sent: list[int] = []
+
+    async def send_message(self, channel_id: int, _content: Any, **_kwargs: Any) -> None:
+        if channel_id in self.reject:
+            raise discord.Forbidden(
+                SimpleNamespace(status=403, reason="Forbidden"), "Missing Access"
+            )
+        self.sent.append(channel_id)
+
+
+class _FakeClient:
+    """Stands in for discord.Client without touching the network."""
+
+    last: ClassVar[_FakeClient | None] = None
+    reject: ClassVar[set[int]] = set()
+
+    def __init__(self, *_args: Any, **_kwargs: Any) -> None:
+        self.http = _FakeHttp(_FakeClient.reject)
+        self.logged_in = False
+        self.closed = False
+        _FakeClient.last = self
+
+    async def login(self, _token: str) -> None:
+        self.logged_in = True
+
+    async def close(self) -> None:
+        self.closed = True
+
+
+@pytest.fixture
+def fake_discord(monkeypatch: pytest.MonkeyPatch) -> type[_FakeClient]:
+    _FakeClient.reject = set()
+    _FakeClient.last = None
+    monkeypatch.setattr(discord_post.discord, "Client", _FakeClient)
+    return _FakeClient
+
+
+def test_a_channel_refusing_does_not_prevent_the_others(
+    fake_discord: type[_FakeClient], three_players: dict[str, Any]
+) -> None:
+    fake_discord.reject = {43}
+    embed = build_embed(scoring.compute(three_players, "2026-09-16"))
+
+    outcome = discord_post.post("token", [42, 43, 44], embed)
+
+    assert outcome.posted == (42, 44)
+    assert [cid for cid, _ in outcome.failed] == [43]
+    assert "Missing Access" in outcome.failed[0][1]
+    assert fake_discord.last is not None
+    assert fake_discord.last.http.sent == [42, 44]
+
+
+def test_the_client_is_closed_even_when_a_channel_refuses(
+    fake_discord: type[_FakeClient], three_players: dict[str, Any]
+) -> None:
+    fake_discord.reject = {42}
+    embed = build_embed(scoring.compute(three_players, "2026-09-16"))
+
+    discord_post.post("token", [42], embed)
+
+    assert fake_discord.last is not None
+    assert fake_discord.last.closed, "the session must be released on every path"
+
+
+def test_all_channels_refusing_is_reported_not_raised(
+    fake_discord: type[_FakeClient], three_players: dict[str, Any]
+) -> None:
+    fake_discord.reject = {42, 43}
+    embed = build_embed(scoring.compute(three_players, "2026-09-16"))
+
+    outcome = discord_post.post("token", [42, 43], embed)
+
+    assert outcome.posted == ()
+    assert outcome.all_failed is True
+
+
+def test_every_channel_succeeding_reports_no_failures(
+    fake_discord: type[_FakeClient], three_players: dict[str, Any]
+) -> None:
+    embed = build_embed(scoring.compute(three_players, "2026-09-16"))
+
+    outcome = discord_post.post("token", [42, 43], embed)
+
+    assert outcome.posted == (42, 43)
+    assert outcome.failed == ()
+    assert outcome.all_failed is False

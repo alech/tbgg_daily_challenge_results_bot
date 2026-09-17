@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Sequence
+from dataclasses import dataclass
 
 import discord
 
@@ -155,14 +157,40 @@ def build_embed(result: TeamResult) -> discord.Embed:
     return embed
 
 
-async def _send(token: str, channel_id: int, embed: discord.Embed) -> None:
+@dataclass(frozen=True)
+class PostOutcome:
+    """Which channels took the post and which refused it."""
+
+    posted: tuple[int, ...]
+    failed: tuple[tuple[int, str], ...]
+
+    @property
+    def all_failed(self) -> bool:
+        return not self.posted and bool(self.failed)
+
+
+async def _send(token: str, channel_ids: Sequence[int], embed: discord.Embed) -> PostOutcome:
+    """Post to each channel in turn, on one login, isolating per-channel failures."""
     client = discord.Client(intents=discord.Intents.none())
+    posted: list[int] = []
+    failed: list[tuple[int, str]] = []
     try:
         await client.login(token)
-        await client.http.send_message(channel_id, None, embeds=[embed.to_dict()])
-        LOGGER.info("Posted result to channel %s", channel_id)
+        payload = embed.to_dict()
+        for channel_id in channel_ids:
+            try:
+                await client.http.send_message(channel_id, None, embeds=[payload])
+            except discord.HTTPException as error:
+                # Missing Access, Missing Permissions, unknown channel: one channel being
+                # misconfigured must never cost the others their post.
+                LOGGER.warning("Could not post to channel %s: %s", channel_id, error)
+                failed.append((channel_id, f"{type(error).__name__}: {error}"))
+            else:
+                LOGGER.info("Posted result to channel %s", channel_id)
+                posted.append(channel_id)
     finally:
         await client.close()
+    return PostOutcome(posted=tuple(posted), failed=tuple(failed))
 
 
 async def _send_dm(token: str, user_id: int, embed: discord.Embed) -> None:
@@ -176,9 +204,14 @@ async def _send_dm(token: str, user_id: int, embed: discord.Embed) -> None:
         await client.close()
 
 
-def post(token: str, channel_id: int, embed: discord.Embed) -> None:
-    """Post an embed to a channel using a bot token, without connecting to the gateway."""
-    asyncio.run(_send(token, channel_id, embed))
+def post(token: str, channel_ids: Sequence[int], embed: discord.Embed) -> PostOutcome:
+    """Post an embed to every channel, without connecting to the gateway.
+
+    Never raises for a channel that rejects the post; the caller decides what a partial
+    delivery means. A channel the bot has not been granted access to yet is the expected
+    case, not an error worth losing the other channels over.
+    """
+    return asyncio.run(_send(token, channel_ids, embed))
 
 
 def post_dm(token: str, user_id: int, embed: discord.Embed) -> None:

@@ -52,10 +52,16 @@ Consequently **nothing in this project writes to SSM**; the function's access is
 
 | | Destination |
 | --- | --- |
-| The daily result | the club channel |
+| The daily result | every channel in `discordChannelIds` |
 | Failures and cookie expiry | a DM to `discordAlertUserId` |
 
 The club never sees a stack trace, and a broken run reaches someone who can fix it.
+
+`discordChannelIds` is a comma-separated list, and delivery is **per channel**: one channel
+refusing the post — the bot not invited to that server yet, or missing **View Channel** /
+**Send Messages** / **Embed Links** — never costs the others their message. A partial
+delivery is reported by DM naming the channel and Discord's own reason; the run only fails
+if *every* channel refuses.
 
 ### Refreshing the cookie
 
@@ -101,7 +107,7 @@ uv run python -m tbgg_bot --dry-run            # yesterday
 uv run python -m tbgg_bot 2026-09-16 --dry-run # a specific UTC day
 ```
 
-Drop `--dry-run` to actually post (needs `DISCORD_TOKEN` and `DISCORD_CHANNEL_ID`).
+Drop `--dry-run` to actually post (needs `DISCORD_TOKEN` and `DISCORD_CHANNEL_IDS`).
 
 ## Deploying
 
@@ -138,7 +144,7 @@ the AWS-managed `aws/ssm` key, so they cost nothing.
 cd infra
 npm install
 npx cdk bootstrap                                   # first time in this account/region only
-npx cdk deploy -c discordChannelId=<channel id> -c discordAlertUserId=<your user id>
+npx cdk deploy -c discordChannelIds=<id>,<id> -c discordAlertUserId=<your user id>
 ```
 
 Put both in the `context` block of `infra/cdk.json` to avoid passing them each time. Your own

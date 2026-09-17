@@ -7,16 +7,18 @@ from typing import Any
 
 import pytest
 
+from conftest import entry, guess, payload
 from tbgg_bot import handler
 
 CHANNEL_ID = 42
+SECOND_CHANNEL_ID = 43
 ALERT_USER_ID = 99
 
 
 @pytest.fixture(autouse=True)
 def _env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("DISCORD_TOKEN", "test-token")
-    monkeypatch.setenv("DISCORD_CHANNEL_ID", str(CHANNEL_ID))
+    monkeypatch.setenv("DISCORD_CHANNEL_IDS", f"{CHANNEL_ID},{SECOND_CHANNEL_ID}")
     monkeypatch.setenv("DISCORD_ALERT_USER_ID", str(ALERT_USER_ID))
     monkeypatch.setenv("GEOGUESSR_NCFA", "test-cookie")
     # Force the local EnvStore path so no test ever reaches for AWS
@@ -24,12 +26,27 @@ def _env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("GEOGUESSR_PARAM_PREFIX", raising=False)
 
 
+def _outcome(posted: tuple[int, ...], failed: tuple[tuple[int, str], ...] = ()) -> Any:
+    return handler.discord_post.PostOutcome(posted=posted, failed=failed)
+
+
 @pytest.fixture
-def channel_posts(monkeypatch: pytest.MonkeyPatch) -> list[tuple[int, Any]]:
-    sent: list[tuple[int, Any]] = []
-    monkeypatch.setattr(
-        handler.discord_post, "post", lambda _t, channel, embed: sent.append((channel, embed))
-    )
+def leaderboard(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Stand in for GeoGuessr so a run reaches the posting step without a network call."""
+    data = payload(entry("Alice", [guess(5000)] * 5), entry("Bob", [guess(4000)] * 5))
+    monkeypatch.setattr(handler.geoguessr, "fetch_leaderboard", lambda *_args: data)
+
+
+@pytest.fixture
+def channel_posts(monkeypatch: pytest.MonkeyPatch) -> list[tuple[list[int], Any]]:
+    """Record every post and pretend all channels accepted it."""
+    sent: list[tuple[list[int], Any]] = []
+
+    def fake_post(_token: str, channels: list[int], embed: Any) -> Any:
+        sent.append((channels, embed))
+        return _outcome(tuple(channels))
+
+    monkeypatch.setattr(handler.discord_post, "post", fake_post)
     return sent
 
 
@@ -139,6 +156,99 @@ def test_the_check_action_never_posts_the_daily_result(
 
     assert result == {"status": "ok", "action": "check", "cookieValid": True}
     assert channel_posts == []
+
+
+def test_the_result_goes_to_every_configured_channel(
+    leaderboard: None, channel_posts: list[tuple[list[int], Any]]
+) -> None:
+    handler.run("2026-09-16")
+
+    channels, _embed = channel_posts[0]
+    assert channels == [CHANNEL_ID, SECOND_CHANNEL_ID]
+
+
+def test_channel_ids_tolerate_spacing_and_trailing_commas(
+    monkeypatch: pytest.MonkeyPatch, leaderboard: None, channel_posts: list[tuple[list[int], Any]]
+) -> None:
+    monkeypatch.setenv("DISCORD_CHANNEL_IDS", " 42 , 43 ,")
+
+    handler.run("2026-09-16")
+
+    assert channel_posts[0][0] == [42, 43]
+
+
+def test_one_channel_refusing_does_not_stop_the_others(
+    monkeypatch: pytest.MonkeyPatch, leaderboard: None, dms: list[tuple[int, Any]]
+) -> None:
+    # the new channel has not been granted access yet: the established one must still get it
+    monkeypatch.setattr(
+        handler.discord_post,
+        "post",
+        lambda _t, _c, _e: _outcome(
+            posted=(CHANNEL_ID,), failed=((SECOND_CHANNEL_ID, "Forbidden: Missing Access"),)
+        ),
+    )
+
+    handler.run("2026-09-16")  # must not raise
+
+    assert len(dms) == 1, "the maintainer should be told which channel refused"
+    description = dms[0][1].to_dict()["description"]
+    assert str(SECOND_CHANNEL_ID) in description
+    assert "Missing Access" in description
+    assert "Delivered to 1 of 2 channels" in description
+
+
+def test_a_partial_failure_is_reported_privately_not_to_the_working_channel(
+    monkeypatch: pytest.MonkeyPatch, leaderboard: None, dms: list[tuple[int, Any]]
+) -> None:
+    posts: list[Any] = []
+
+    def fake_post(_t: str, channels: list[int], embed: Any) -> Any:
+        posts.append(embed)
+        return _outcome(posted=(CHANNEL_ID,), failed=((SECOND_CHANNEL_ID, "Forbidden"),))
+
+    monkeypatch.setattr(handler.discord_post, "post", fake_post)
+
+    handler.run("2026-09-16")
+
+    assert len(posts) == 1, "the club channel gets the result once, not a failure notice"
+    assert dms[0][0] == ALERT_USER_ID
+
+
+def test_every_channel_refusing_fails_the_run(
+    monkeypatch: pytest.MonkeyPatch, leaderboard: None, dms: list[tuple[int, Any]]
+) -> None:
+    monkeypatch.setattr(
+        handler.discord_post,
+        "post",
+        lambda _t, _c, _e: _outcome(
+            posted=(), failed=((CHANNEL_ID, "Forbidden"), (SECOND_CHANNEL_ID, "Forbidden"))
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="No channel accepted"):
+        handler.run("2026-09-16")
+
+    assert len(dms) == 1
+
+
+def test_a_single_configured_channel_still_works(
+    monkeypatch: pytest.MonkeyPatch, leaderboard: None, channel_posts: list[tuple[list[int], Any]]
+) -> None:
+    monkeypatch.setenv("DISCORD_CHANNEL_IDS", str(CHANNEL_ID))
+
+    handler.run("2026-09-16")
+
+    assert channel_posts[0][0] == [CHANNEL_ID]
+
+
+def test_no_configured_channels_fails_loudly(
+    monkeypatch: pytest.MonkeyPatch, leaderboard: None
+) -> None:
+    monkeypatch.setenv("DISCORD_CHANNEL_IDS", "")
+
+    with pytest.raises(ValueError, match="DISCORD_CHANNEL_IDS"):
+        handler.run("2026-09-16")
 
 
 def test_a_missing_alert_user_id_fails_loudly(monkeypatch: pytest.MonkeyPatch) -> None:

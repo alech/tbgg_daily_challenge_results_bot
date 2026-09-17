@@ -5,7 +5,7 @@
     "exclude": ["README.md", "cdk*.json", "**/*.d.ts", "**/*.js", "node_modules", "cdk.out"]
   },
   "context": {
-    "discordChannelId": "1549812038405198007",
+    "discordChannelIds": "1549812038405198007,1460063550172168273",
     "discordAlertUserId": "537368326637355019",
     "@aws-cdk/aws-lambda:recognizeLayerVersion": true,
     "@aws-cdk/core:checkSecretUsage": true,

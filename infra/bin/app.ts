@@ -17,7 +17,7 @@ function requiredContext(key: string): string {
   return value;
 }
 
-const discordChannelId = requiredContext('discordChannelId');
+const discordChannelIds = requiredContext('discordChannelIds');
 const discordAlertUserId = requiredContext('discordAlertUserId');
 
 // Deploy into whichever account and region the current CLI credentials point at.
@@ -27,7 +27,7 @@ const env: cdk.Environment = {
 };
 
 new TbggBotStack(app, 'TbggBotStack', {
-  discordChannelId,
+  discordChannelIds,
   discordAlertUserId,
   projectRoot: path.resolve(__dirname, '..', '..'),
   env,
