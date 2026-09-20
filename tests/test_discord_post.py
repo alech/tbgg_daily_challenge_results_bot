@@ -95,6 +95,23 @@ def test_tied_winners_appear_on_their_own_rows_without_repeating_the_score(
     assert "Alice" in table and "Bob" in table
 
 
+def test_the_closest_of_the_tied_guesses_leads_the_round() -> None:
+    data = payload(
+        entry("Furthest", [guess(5000, 40.0)]),
+        entry("Closest", [guess(5000, 2.0)]),
+        entry("Middle", [guess(5000, 30.0)]),
+    )
+    rows = [
+        line
+        for line in _embed_dict(data)["description"].split("```")[1].strip().split("\n")[1:]
+        if line.strip()
+    ]
+
+    assert [row.split()[-1] for row in rows] == ["Closest", "Middle", "Furthest"]
+    # the score sits on the first row, which is now the tightest guess
+    assert "5,000" in rows[0] and "Closest" in rows[0]
+
+
 def test_an_extreme_tie_is_summarised_only_once_discord_forces_it() -> None:
     # 40 players scoring 5000 on all 5 rounds is 200 table rows; that genuinely cannot fit
     data = payload(*(entry(f"Player{i:02d}", [guess(5000)] * 5) for i in range(40)))

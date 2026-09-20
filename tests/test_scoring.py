@@ -23,8 +23,39 @@ def test_every_player_tied_for_a_round_is_listed(three_players: dict[str, Any]) 
     tied = result.rounds[1]
     assert tied.score == 4000
     assert sorted(w.nick for w in tied.winners) == ["Alice", "Bob"]
-    # the tie is broken by nothing: both rows keep their own distance and time
+    # each keeps their own distance and time
     assert {w.distance_m for w in tied.winners} == {120.0, 95.0}
+
+
+def test_tied_winners_are_ordered_closest_guess_first(three_players: dict[str, Any]) -> None:
+    # Bob guessed 95 m, Alice 120 m, and Alice is listed first in the payload
+    tied = scoring.compute(three_players, "2026-09-16").rounds[1]
+
+    assert [w.nick for w in tied.winners] == ["Bob", "Alice"]
+    assert [w.distance_m for w in tied.winners] == [95.0, 120.0]
+
+
+def test_ordering_by_distance_never_overrides_the_score() -> None:
+    # a closer guess that scored less does not join the round's winners at all
+    data = payload(
+        entry("Closer", [guess(4000, 1.0)]),
+        entry("Better", [guess(4900, 50.0)]),
+    )
+    (round_one,) = scoring.compute(data, "2026-09-16").rounds
+
+    assert round_one.score == 4900
+    assert [w.nick for w in round_one.winners] == ["Better"]
+
+
+def test_a_whole_club_tied_on_a_round_is_ordered_by_distance() -> None:
+    data = payload(
+        entry("Furthest", [guess(5000, 40.0)]),
+        entry("Closest", [guess(5000, 2.0)]),
+        entry("Middle", [guess(5000, 30.0)]),
+    )
+    (round_one,) = scoring.compute(data, "2026-09-16").rounds
+
+    assert [w.nick for w in round_one.winners] == ["Closest", "Middle", "Furthest"]
 
 
 def test_a_player_who_played_fewer_rounds_only_counts_where_they_guessed(

@@ -10,7 +10,7 @@ MAX_ROUND_SCORE = 5000
 
 @dataclass(frozen=True)
 class Winner:
-    """A player who tied for the best score on one round."""
+    """A player who matched the best score on one round."""
 
     nick: str
     distance_m: float
@@ -85,7 +85,12 @@ def _perfect_rounds(entry: dict[str, Any]) -> int:
 
 
 def _best_on_round(entries: list[dict[str, Any]], index: int) -> tuple[int, list[Winner]]:
-    """The top score on one round and every player tied for it."""
+    """The top score on one round and every player who matched it, closest guess first.
+
+    GeoGuessr rounds a round score to a whole number, so several players routinely share
+    5000 from visibly different distances. They all earned the round, but ordering them by
+    distance puts the tightest guess at the top where the score is printed.
+    """
     best_score = -1
     winners: list[Winner] = []
     for entry in entries:
@@ -104,7 +109,7 @@ def _best_on_round(entries: list[dict[str, Any]], index: int) -> tuple[int, list
                     time_s=int(guess["time"]),
                 )
             )
-    return best_score, winners
+    return best_score, sorted(winners, key=lambda w: w.distance_m)
 
 
 def compute(payload: dict[str, Any], date_str: str) -> TeamResult:
