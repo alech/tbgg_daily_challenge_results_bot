@@ -261,3 +261,15 @@ def test_every_channel_succeeding_reports_no_failures(
     assert outcome.posted == (42, 43)
     assert outcome.failed == ()
     assert outcome.all_failed is False
+
+
+def test_the_summary_names_every_player_tied_for_best_solo() -> None:
+    data = payload(
+        entry("Velocitxy", [guess(5000)] * 5),
+        entry("Kenaitan", [guess(5000)] * 5),
+        entry("Behind", [guess(4000)] * 5),
+    )
+    header = _embed_dict(data)["description"].split("\n")[1]
+
+    assert "Velocitxy" in header and "Kenaitan" in header
+    assert "Behind" not in header

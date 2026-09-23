@@ -83,8 +83,8 @@ def test_gain_over_solo_is_team_minus_the_best_single_player(
     three_players: dict[str, Any],
 ) -> None:
     result = scoring.compute(three_players, "2026-09-16")
-    assert result.solo_best.nick == "Bob"
-    assert result.solo_best.score == 20200
+    assert [s.nick for s in result.solo_leaders] == ["Bob"]
+    assert result.solo_best_score == 20200
     assert result.gain_over_solo == result.team_total - 20200
 
 
@@ -145,3 +145,16 @@ def test_distances_render_in_the_most_readable_unit(meters: float, expected: str
 )
 def test_country_codes_render_as_flags(code: str, expected: str) -> None:
     assert scoring.flag(code) == expected
+
+
+def test_a_tie_for_the_best_solo_total_credits_everyone_sharing_it() -> None:
+    data = payload(
+        entry("First", [guess(5000)] * 5),
+        entry("Second", [guess(5000)] * 5),
+        entry("Behind", [guess(4000)] * 5),
+    )
+    result = scoring.compute(data, "2026-09-22")
+
+    assert sorted(s.nick for s in result.solo_leaders) == ["First", "Second"]
+    assert result.solo_best_score == 25000
+    assert result.gain_over_solo == 0

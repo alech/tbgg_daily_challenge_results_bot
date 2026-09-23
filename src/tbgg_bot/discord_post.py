@@ -119,11 +119,11 @@ def build_embed(result: TeamResult) -> discord.Embed:
     """Render the day's team result as a Discord embed."""
     percentage = 100 * result.team_total / result.max_total if result.max_total else 0.0
     route = " ".join(flag(r.country) for r in result.rounds)
-    solo = result.solo_best
+    leaders = ", ".join(s.nick for s in result.solo_leaders)
 
     header = (
         f"**{result.team_total:,}** / {result.max_total:,} · {percentage:.2f}%\n"
-        f"Best solo **{solo.score:,}** ({solo.nick}) · "
+        f"Best solo **{result.solo_best_score:,}** ({leaders}) · "
         f"team gain **+{result.gain_over_solo:,}**\n\n"
         f"{route}\n"
     )

@@ -59,12 +59,18 @@ class TeamResult:
         return len(self.rounds) * MAX_ROUND_SCORE
 
     @property
-    def solo_best(self) -> Standing:
-        return max(self.standings, key=lambda s: s.score)
+    def solo_best_score(self) -> int:
+        return max((s.score for s in self.standings), default=0)
+
+    @property
+    def solo_leaders(self) -> tuple[Standing, ...]:
+        """Everyone sharing the day's top total. A tie at the top is common enough on an easy
+        day that crediting only whoever the API listed first would be unfair."""
+        return tuple(s for s in self.standings if s.score == self.solo_best_score)
 
     @property
     def gain_over_solo(self) -> int:
-        return self.team_total - self.solo_best.score
+        return self.team_total - self.solo_best_score
 
 
 def playable_entries(payload: dict[str, Any]) -> list[dict[str, Any]]:
