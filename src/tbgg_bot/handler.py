@@ -20,12 +20,11 @@ from typing import Any
 import discord
 
 from tbgg_bot import discord_post, geoguessr, scoring
-from tbgg_bot.credentials import CookieStore, EnvStore, ParameterStore, get_discord_token
+from tbgg_bot.credentials import cookie_store, get_discord_token
 
 LOGGER = logging.getLogger()
 LOGGER.setLevel(logging.INFO)
 
-GEOGUESSR_PREFIX_ENV = "GEOGUESSR_PARAM_PREFIX"
 DISCORD_TOKEN_PARAM_ENV = "DISCORD_TOKEN_PARAM"
 CHANNEL_ENV = "DISCORD_CHANNEL_IDS"
 ALERT_USER_ENV = "DISCORD_ALERT_USER_ID"
@@ -42,11 +41,6 @@ REFRESH_HELP = (
 def previous_utc_day() -> str:
     """The UTC day that just ended, which is the challenge this run reports on."""
     return (dt.datetime.now(dt.UTC).date() - dt.timedelta(days=1)).isoformat()
-
-
-def _cookie_store() -> CookieStore:
-    prefix = os.environ.get(GEOGUESSR_PREFIX_ENV)
-    return ParameterStore(prefix) if prefix else EnvStore()
 
 
 def _discord_token() -> str:
@@ -85,7 +79,7 @@ def run(date_str: str) -> None:
     """Fetch, compute and post the result for one UTC day."""
     token = _discord_token()
     try:
-        cookie = _cookie_store().cookie()
+        cookie = cookie_store().cookie()
         if not cookie:
             raise geoguessr.SessionExpiredError("No _ncfa cookie is stored")
         result = scoring.compute(geoguessr.fetch_leaderboard(date_str, cookie), date_str)
@@ -119,7 +113,7 @@ def run(date_str: str) -> None:
 def check_cookie() -> bool:
     """Verify the cookie and DM a warning if it has expired. Returns whether it is usable."""
     token = _discord_token()
-    cookie = _cookie_store().cookie()
+    cookie = cookie_store().cookie()
     if cookie and geoguessr.session_is_valid(cookie):
         return True
 

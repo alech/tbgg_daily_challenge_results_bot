@@ -83,3 +83,26 @@ def test_an_outage_is_not_mistaken_for_an_expired_cookie(monkeypatch: pytest.Mon
 
     with pytest.raises(geoguessr.GeoGuessrError):
         geoguessr.session_is_valid("fine")
+
+
+def test_the_club_leaderboard_is_fetched_with_the_cookie(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: list[Any] = []
+
+    def fake_urlopen(request: Any, **_: Any) -> FakeResponse:
+        seen.append(request)
+        return FakeResponse(b'{"top":[{"position":1,"xp":10}]}')
+
+    monkeypatch.setattr(geoguessr.urllib.request, "urlopen", fake_urlopen)
+
+    assert geoguessr.fetch_club_leaderboard("good") == {"top": [{"position": 1, "xp": 10}]}
+    assert seen[0].full_url == geoguessr.CLUB_XP_URL
+    assert seen[0].get_header("Cookie") == "_ncfa=good"
+
+
+def test_a_rejected_cookie_on_the_club_leaderboard_is_an_expired_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(geoguessr.urllib.request, "urlopen", _raiser(401))
+
+    with pytest.raises(geoguessr.SessionExpiredError):
+        geoguessr.fetch_club_leaderboard("stale")

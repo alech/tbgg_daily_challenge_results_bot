@@ -34,6 +34,22 @@ EventBridge *Rules* are UTC-only) and checks whether the GeoGuessr cookie still 
 If it has expired you get a **DM** with refresh instructions, hours before the nightly post
 would have failed.
 
+### Club XP history
+
+A separate Lambda snapshots the global club XP leaderboard (`/api/v4/clubs/leaderboard`) on
+the hour, every hour, and writes the response verbatim to the `ClubXpBucketName` bucket as
+`club-xp/YYYY-MM-DD/HHMMSSZ.json` (UTC fetch time). `top` holds the 50 highest-ranked clubs
+with their `position` and `xp`; `aroundUser` is TBGG's own neighbourhood, so the club stays
+tracked even if it falls out of the top 50.
+
+The bucket is retained if the stack is deleted, since the history cannot be fetched again.
+A failed snapshot is not DMed — the cookie already has its evening check, and a missed hour is
+only a gap in the series.
+
+```bash
+aws s3 sync s3://<ClubXpBucketName>/club-xp ./club-xp   # pull the history down
+```
+
 ### Authentication
 
 The `_ncfa` session cookie is the only credential. GeoGuessr signs users in with emailed
@@ -86,6 +102,7 @@ websocket: a Lambda invocation is too short-lived to justify the connect handsha
 | `src/tbgg_bot/scoring.py` | Best-of-rounds team score |
 | `src/tbgg_bot/discord_post.py` | Embed rendering and pycord posting |
 | `src/tbgg_bot/handler.py` | Lambda entry point |
+| `src/tbgg_bot/club_xp.py` | Hourly club XP snapshot to S3 |
 | `infra/` | TypeScript CDK app |
 | `requirements-lambda.txt` | Pinned runtime deps, exported from `uv.lock` |
 

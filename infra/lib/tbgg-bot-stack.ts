@@ -4,6 +4,7 @@ import * as targets from 'aws-cdk-lib/aws-events-targets';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as logs from 'aws-cdk-lib/aws-logs';
+import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as scheduler from 'aws-cdk-lib/aws-scheduler';
 import { Construct } from 'constructs';
 import { handlerCode } from './bundling';
@@ -31,6 +32,9 @@ const SCHEDULE = events.Schedule.cron({ minute: '5', hour: '0', day: '*', month:
  */
 const CHECK_CRON = 'cron(0 20 * * ? *)';
 const CHECK_TIMEZONE = 'Europe/Berlin';
+
+/** Club XP is sampled on the hour to chart the global club leaderboard over time. */
+const CLUB_XP_SCHEDULE = events.Schedule.cron({ minute: '0' });
 
 const GEOGUESSR_PREFIX = '/tbgg-bot/geoguessr';
 const DISCORD_TOKEN_PARAM = '/tbgg-bot/discord/token';
@@ -109,6 +113,52 @@ export class TbggBotStack extends cdk.Stack {
       },
     });
 
+    // The XP history cannot be re-fetched after the fact, so the bucket outlives the stack.
+    const clubXpBucket = new s3.Bucket(this, 'ClubXpHistory', {
+      blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
+      encryption: s3.BucketEncryption.S3_MANAGED,
+      enforceSSL: true,
+      removalPolicy: cdk.RemovalPolicy.RETAIN,
+    });
+
+    const clubXpLogGroup = new logs.LogGroup(this, 'ClubXpLogs', {
+      retention: logs.RetentionDays.ONE_MONTH,
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+    });
+
+    // A function of its own rather than another action on the daily one: it needs S3 but not
+    // the Discord token, and its hourly failures should not count against the nightly post.
+    const clubXp = new lambda.Function(this, 'ClubXpSnapshot', {
+      runtime: lambda.Runtime.PYTHON_3_13,
+      architecture: lambda.Architecture.ARM_64,
+      handler: 'tbgg_bot.club_xp.lambda_handler',
+      code: handlerCode(props.projectRoot),
+      timeout: cdk.Duration.seconds(60),
+      memorySize: 256,
+      logGroup: clubXpLogGroup,
+      environment: {
+        GEOGUESSR_PARAM_PREFIX: GEOGUESSR_PREFIX,
+        CLUB_XP_BUCKET: clubXpBucket.bucketName,
+      },
+    });
+
+    clubXp.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ['ssm:GetParameter'],
+        resources: [parameterArn(COOKIE_PARAM)],
+      }),
+    );
+    // Write-only: it adds snapshots and never needs to read or delete one.
+    clubXpBucket.grantPut(clubXp);
+
+    new events.Rule(this, 'ClubXpSchedule', {
+      description: 'Snapshot the global GeoGuessr club XP leaderboard',
+      schedule: CLUB_XP_SCHEDULE,
+      targets: [new targets.LambdaFunction(clubXp, { retryAttempts: 2 })],
+    });
+
     new cdk.CfnOutput(this, 'FunctionName', { value: handler.functionName });
+    new cdk.CfnOutput(this, 'ClubXpFunctionName', { value: clubXp.functionName });
+    new cdk.CfnOutput(this, 'ClubXpBucketName', { value: clubXpBucket.bucketName });
   }
 }

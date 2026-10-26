@@ -42,6 +42,7 @@ known-first-party = ["tbgg_bot", "conftest"]
 # The SsmClient Protocol mirrors boto3's PascalCase keyword arguments verbatim; renaming them
 # would stop the Protocol matching the real client.
 "src/tbgg_bot/credentials.py" = ["N803"]
+"src/tbgg_bot/club_xp.py" = ["N803"]
 
 [tool.mypy]
 python_version = "3.13"

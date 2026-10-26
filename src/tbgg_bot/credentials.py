@@ -14,6 +14,7 @@ from typing import Protocol, TypedDict, cast
 LOGGER = logging.getLogger(__name__)
 
 COOKIE_KEY = "ncfa"
+PREFIX_ENV = "GEOGUESSR_PARAM_PREFIX"
 
 
 class _Parameter(TypedDict):
@@ -82,6 +83,12 @@ class EnvStore:
 
     def cookie(self) -> str | None:
         return os.environ.get("GEOGUESSR_NCFA") or None
+
+
+def cookie_store() -> CookieStore:
+    """SSM when GEOGUESSR_PARAM_PREFIX is set (in Lambda), otherwise the environment."""
+    prefix = os.environ.get(PREFIX_ENV)
+    return ParameterStore(prefix) if prefix else EnvStore()
 
 
 def get_discord_token(parameter_name: str, client: SsmClient | None = None) -> str:

@@ -19,6 +19,7 @@ LOGGER = logging.getLogger(__name__)
 BASE = "https://www.geoguessr.com/api/v3"
 PROFILES_URL = f"{BASE}/profiles"
 LEADERBOARD_URL = f"{BASE}/challenges/daily-challenges/leaderboard/club"
+CLUB_XP_URL = "https://www.geoguessr.com/api/v4/clubs/leaderboard"
 
 USER_AGENT = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
@@ -67,6 +68,15 @@ def fetch_leaderboard(date_str: str, ncfa: str) -> dict[str, Any]:
         ncfa,
         referer=f"https://www.geoguessr.com/daily-challenges/{date_str}/club",
     )
+
+
+def fetch_club_leaderboard(ncfa: str) -> dict[str, Any]:
+    """Fetch the global club XP ranking.
+
+    `top` holds the 50 highest-ranked clubs; `aroundUser` is the neighbourhood of the
+    cookie owner's own club, which keeps it visible even if it falls out of the top 50.
+    """
+    return _get(CLUB_XP_URL, ncfa, referer="https://www.geoguessr.com/community/clubs")
 
 
 def session_is_valid(ncfa: str) -> bool:
