@@ -54,10 +54,15 @@ aws s3 sync s3://<ClubXpBucketName>/club-xp ./club-xp   # pull the history down
 
 The `_ncfa` session cookie is the only credential. GeoGuessr signs users in with emailed
 one-time codes rather than passwords, so there is no credential pair a bot can post to obtain
-a session — the cookie is copied from a browser and replaced by hand when it expires. That is
-what the evening health check exists to warn about.
+a session — the cookie is copied from a browser.
 
-Consequently **nothing in this project writes to SSM**; the function's access is read-only.
+Every authenticated response reissues the cookie, and sessions lapse well before the one-year
+expiry the cookie claims, so after each nightly post the bot stores the reissued value back
+in SSM — only once it has checked that the new value authenticates, and never at the cost of
+the post. When the session is revoked anyway, the cookie is replaced by hand; that is what the
+evening health check exists to warn about.
+
+The cookie parameter is the only thing the bot writes; the Discord token is read-only.
 
 | Parameter | Contents |
 | --- | --- |
@@ -69,7 +74,7 @@ Consequently **nothing in this project writes to SSM**; the function's access is
 | | Destination |
 | --- | --- |
 | The daily result | every channel in `discordChannelIds` |
-| Failures and cookie expiry | a DM to `discordAlertUserId` |
+| Failures, cookie expiry, a failed cookie refresh | a DM to `discordAlertUserId` |
 
 The club never sees a stack trace, and a broken run reaches someone who can fix it.
 

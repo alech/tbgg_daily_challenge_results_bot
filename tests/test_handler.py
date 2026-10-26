@@ -24,6 +24,8 @@ def _env(monkeypatch: pytest.MonkeyPatch) -> None:
     # Force the local EnvStore path so no test ever reaches for AWS
     monkeypatch.delenv("DISCORD_TOKEN_PARAM", raising=False)
     monkeypatch.delenv("GEOGUESSR_PARAM_PREFIX", raising=False)
+    # No reissued cookie unless a test asks for one, so no run reaches GeoGuessr
+    monkeypatch.setattr(handler.geoguessr, "reissued_cookie", lambda _cookie: None)
 
 
 def _outcome(posted: tuple[int, ...], failed: tuple[tuple[int, str], ...] = ()) -> Any:
@@ -257,3 +259,111 @@ def test_a_missing_alert_user_id_fails_loudly(monkeypatch: pytest.MonkeyPatch) -
 
     with pytest.raises(ValueError, match="DISCORD_ALERT_USER_ID"):
         handler.check_cookie()
+
+
+class RecordingStore:
+    def __init__(self, cookie: str | None = "old-cookie") -> None:
+        self.value = cookie
+        self.stored: list[str] = []
+
+    def cookie(self) -> str | None:
+        return self.value
+
+    def store(self, cookie: str) -> None:
+        self.stored.append(cookie)
+
+
+@pytest.fixture
+def store(monkeypatch: pytest.MonkeyPatch) -> RecordingStore:
+    recording = RecordingStore()
+    monkeypatch.setattr(handler, "cookie_store", lambda: recording)
+    return recording
+
+
+def _reissue(monkeypatch: pytest.MonkeyPatch, fresh: str | None, *, valid: bool = True) -> None:
+    monkeypatch.setattr(handler.geoguessr, "reissued_cookie", lambda _cookie: fresh)
+    monkeypatch.setattr(handler.geoguessr, "session_is_valid", lambda cookie: valid)
+
+
+def test_the_reissued_cookie_is_stored_after_posting(
+    monkeypatch: pytest.MonkeyPatch,
+    leaderboard: None,
+    channel_posts: list[tuple[list[int], Any]],
+    store: RecordingStore,
+    dms: list[tuple[int, Any]],
+) -> None:
+    _reissue(monkeypatch, "new-cookie")
+
+    handler.run("2026-09-16")
+
+    assert store.stored == ["new-cookie"]
+    assert len(channel_posts) == 1
+    assert dms == []
+
+
+@pytest.mark.parametrize("fresh", [None, "old-cookie"])
+def test_nothing_is_written_when_no_new_cookie_was_issued(
+    monkeypatch: pytest.MonkeyPatch,
+    leaderboard: None,
+    channel_posts: list[tuple[list[int], Any]],
+    store: RecordingStore,
+    dms: list[tuple[int, Any]],
+    fresh: str | None,
+) -> None:
+    _reissue(monkeypatch, fresh)
+
+    handler.run("2026-09-16")
+
+    assert store.stored == []
+    assert dms == []
+
+
+def test_a_reissued_cookie_that_does_not_work_is_not_stored(
+    monkeypatch: pytest.MonkeyPatch,
+    leaderboard: None,
+    channel_posts: list[tuple[list[int], Any]],
+    store: RecordingStore,
+    dms: list[tuple[int, Any]],
+) -> None:
+    _reissue(monkeypatch, "broken-cookie", valid=False)
+
+    handler.run("2026-09-16")  # must not raise: the result is out and the old cookie works
+
+    assert store.stored == [], "a working cookie must never be replaced by a rejected one"
+    assert len(channel_posts) == 1
+    assert "was rejected" in dms[0][1].to_dict()["description"]
+
+
+def test_a_failed_refresh_is_dmed_but_does_not_fail_the_run(
+    monkeypatch: pytest.MonkeyPatch,
+    leaderboard: None,
+    channel_posts: list[tuple[list[int], Any]],
+    store: RecordingStore,
+    dms: list[tuple[int, Any]],
+) -> None:
+    def denied(_cookie: str) -> None:
+        raise PermissionError("AccessDeniedException: ssm:PutParameter")
+
+    _reissue(monkeypatch, "new-cookie")
+    monkeypatch.setattr(store, "store", denied)
+
+    handler.run("2026-09-16")
+
+    assert len(channel_posts) == 1
+    assert dms[0][0] == ALERT_USER_ID
+    assert "ssm:PutParameter" in dms[0][1].to_dict()["description"]
+
+
+def test_no_refresh_is_attempted_when_the_result_could_not_be_built(
+    monkeypatch: pytest.MonkeyPatch, store: RecordingStore, dms: list[tuple[int, Any]]
+) -> None:
+    def explode(_date: str, _cookie: str) -> dict[str, Any]:
+        raise RuntimeError("geoguessr is down")
+
+    monkeypatch.setattr(handler.geoguessr, "fetch_leaderboard", explode)
+    _reissue(monkeypatch, "new-cookie")
+
+    with pytest.raises(RuntimeError):
+        handler.run("2026-09-16")
+
+    assert store.stored == []

@@ -30,6 +30,11 @@ class FakeSsm:
             raise ParameterNotFound(name)
         return {"Parameter": {"Name": name, "Value": self.values[name]}}
 
+    def put_parameter(self, **kwargs: Any) -> dict[str, Any]:
+        self.calls.append(kwargs)
+        self.values[kwargs["Name"]] = kwargs["Value"]
+        return {}
+
 
 def test_the_cookie_is_read_from_its_parameter() -> None:
     client = FakeSsm({COOKIE_PARAM: "a-real-cookie"})
@@ -87,3 +92,28 @@ def test_the_env_store_reads_the_cookie_from_the_environment(
 
     monkeypatch.delenv("GEOGUESSR_NCFA")
     assert EnvStore().cookie() is None
+
+
+def test_a_stored_cookie_overwrites_the_parameter_as_a_secure_string() -> None:
+    client = FakeSsm({COOKIE_PARAM: "old"})
+    store = ParameterStore(PREFIX, client)
+
+    store.store("new")
+
+    assert store.cookie() == "new"
+    assert client.calls[0] == {
+        "Name": COOKIE_PARAM,
+        "Value": "new",
+        "Type": "SecureString",
+        "Overwrite": True,
+    }
+
+
+def test_the_env_store_does_not_touch_the_environment_on_store(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GEOGUESSR_NCFA", "from-env")
+
+    EnvStore().store("new")
+
+    assert EnvStore().cookie() == "from-env"

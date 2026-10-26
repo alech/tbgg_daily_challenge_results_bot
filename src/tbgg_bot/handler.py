@@ -2,7 +2,8 @@
 
 Two actions share one function:
 
-* `post` (the default, 00:05 UTC) publishes the finished result for the day that just ended.
+* `post` (the default, 00:05 UTC) publishes the finished result for the day that just ended,
+  then stores the cookie GeoGuessr reissued so the stored session is always the newest.
 * `check` (20:00 Europe/Berlin) verifies the `_ncfa` cookie and DMs a warning if it has
   expired, leaving the evening free to paste a fresh one in before the nightly post.
 
@@ -20,7 +21,7 @@ from typing import Any
 import discord
 
 from tbgg_bot import discord_post, geoguessr, scoring
-from tbgg_bot.credentials import cookie_store, get_discord_token
+from tbgg_bot.credentials import CookieStore, cookie_store, get_discord_token
 
 LOGGER = logging.getLogger()
 LOGGER.setLevel(logging.INFO)
@@ -75,11 +76,34 @@ def _alert(token: str, title: str, description: str) -> None:
     discord_post.post_dm(token, _required_id(ALERT_USER_ENV), embed)
 
 
-def run(date_str: str) -> None:
-    """Fetch, compute and post the result for one UTC day."""
-    token = _discord_token()
+def _refresh_cookie(token: str, store: CookieStore, cookie: str) -> None:
+    """Store the cookie GeoGuessr reissues. Never fails the run: the old one still works."""
     try:
-        cookie = cookie_store().cookie()
+        fresh = geoguessr.reissued_cookie(cookie)
+        if not fresh or fresh == cookie:
+            LOGGER.info("GeoGuessr did not reissue the cookie")
+            return
+        # Never replace a working cookie with one that has not been seen to work
+        if not geoguessr.session_is_valid(fresh):
+            raise geoguessr.GeoGuessrError("The reissued cookie was rejected")
+        store.store(fresh)
+        LOGGER.info("Stored the reissued cookie")
+    except Exception as error:
+        LOGGER.exception("Could not refresh the cookie")
+        _alert(
+            token,
+            "🔑 Could not refresh the GeoGuessr cookie",
+            "The result was posted and the stored cookie was left as it was.\n"
+            f"```\n{type(error).__name__}: {error}\n```",
+        )
+
+
+def run(date_str: str) -> None:
+    """Fetch, compute and post the result for one UTC day, then refresh the cookie."""
+    token = _discord_token()
+    store = cookie_store()
+    try:
+        cookie = store.cookie()
         if not cookie:
             raise geoguessr.SessionExpiredError("No _ncfa cookie is stored")
         result = scoring.compute(geoguessr.fetch_leaderboard(date_str, cookie), date_str)
@@ -94,6 +118,7 @@ def run(date_str: str) -> None:
         raise
 
     outcome = discord_post.post(token, _channel_ids(), discord_post.build_embed(result))
+    _refresh_cookie(token, store, cookie)
     if outcome.failed:
         # Getting the result out to the channels that do work matters more than a clean run,
         # so a refused channel is reported privately rather than aborting the post.

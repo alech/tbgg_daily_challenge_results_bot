@@ -75,18 +75,23 @@ export class TbggBotStack extends cdk.Stack {
       },
     });
 
-    // Read-only, and only these two parameters. Nothing in this project writes the cookie:
-    // GeoGuessr signs in with emailed one-time codes, so refreshing it is a human pasting a
-    // new value in.
     handler.addToRolePolicy(
       new iam.PolicyStatement({
         actions: ['ssm:GetParameter'],
         resources: [parameterArn(COOKIE_PARAM), parameterArn(DISCORD_TOKEN_PARAM)],
       }),
     );
+    // The nightly post stores the cookie GeoGuessr reissues, because sessions lapse well
+    // before the cookie's claimed one-year expiry. Only the cookie: the token stays read-only.
+    handler.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ['ssm:PutParameter'],
+        resources: [parameterArn(COOKIE_PARAM)],
+      }),
+    );
 
-    // Decryption needs no explicit kms:Decrypt grant: the AWS-managed aws/ssm key's own policy
-    // allows principals in this account to use it when the call goes through SSM.
+    // Neither decryption nor encryption needs a KMS grant: the AWS-managed aws/ssm key's own
+    // policy allows principals in this account to use it when the call goes through SSM.
 
     new events.Rule(this, 'DailySchedule', {
       description: 'Post the TBGG club daily-challenge result just after the challenge closes',

@@ -15,8 +15,11 @@ from tbgg_bot import geoguessr
 class FakeResponse:
     """A urlopen context manager returning the given JSON body."""
 
-    def __init__(self, body: bytes = b"{}") -> None:
+    def __init__(self, body: bytes = b"{}", set_cookies: tuple[str, ...] = ()) -> None:
         self._body = io.BytesIO(body)
+        self.headers = Message()
+        for value in set_cookies:
+            self.headers["Set-Cookie"] = value
 
     def read(self, *args: int) -> bytes:
         return self._body.read(*args)
@@ -106,3 +109,45 @@ def test_a_rejected_cookie_on_the_club_leaderboard_is_an_expired_session(
 
     with pytest.raises(geoguessr.SessionExpiredError):
         geoguessr.fetch_club_leaderboard("stale")
+
+
+def _responding(*set_cookies: str) -> Any:
+    return lambda *_a, **_k: FakeResponse(b'{"nick":"alech"}', set_cookies)
+
+
+def test_the_reissued_cookie_is_read_from_set_cookie(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        geoguessr.urllib.request,
+        "urlopen",
+        _responding(
+            "session=abc; expires=Mon, 26 Oct 2026 19:30:40 GMT; path=/; secure; httponly",
+            "_ncfa=new%3Dvalue%2Fx; expires=Tue, 26 Oct 2027 19:10:40 GMT; domain=.geoguessr.com;"
+            " path=/; secure; httponly",
+        ),
+    )
+
+    # stored exactly as sent: the request header passes the cookie on still URL-encoded
+    assert geoguessr.reissued_cookie("old") == "new%3Dvalue%2Fx"
+
+
+def test_no_set_cookie_means_no_reissued_cookie(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(geoguessr.urllib.request, "urlopen", _responding("session=abc; path=/"))
+
+    assert geoguessr.reissued_cookie("old") is None
+
+
+def test_a_malformed_neighbouring_cookie_does_not_hide_ours(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        geoguessr.urllib.request, "urlopen", _responding('bad"name=1', "_ncfa=fresh; path=/")
+    )
+
+    assert geoguessr.reissued_cookie("old") == "fresh"
+
+
+def test_a_rejected_cookie_is_not_reissued(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(geoguessr.urllib.request, "urlopen", _raiser(401))
+
+    with pytest.raises(geoguessr.SessionExpiredError):
+        geoguessr.reissued_cookie("stale")

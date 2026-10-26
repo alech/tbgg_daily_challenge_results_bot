@@ -1,8 +1,9 @@
-"""Where the `_ncfa` session cookie is read from.
+"""Where the `_ncfa` session cookie is read from and written back to.
 
-The cookie is the only credential, and nothing in this project ever writes it: GeoGuessr
-signs users in with emailed one-time codes, so refreshing the session is a human pasting a
-new cookie in. That keeps the Lambda's SSM access strictly read-only.
+The cookie is the only credential: GeoGuessr signs users in with emailed one-time codes, so
+a session starts with a human pasting a cookie in. Sessions expire well within the one-year
+expiry the cookie claims, so the daily run stores the value GeoGuessr reissues on each call.
+Only that one parameter is ever written; the Discord token stays read-only.
 """
 
 from __future__ import annotations
@@ -35,12 +36,18 @@ class SsmClient(Protocol):
 
     def get_parameter(self, *, Name: str, WithDecryption: bool) -> _GetParameterResult: ...
 
+    def put_parameter(self, *, Name: str, Value: str, Type: str, Overwrite: bool) -> object: ...
+
 
 class CookieStore(Protocol):
-    """Somewhere the `_ncfa` cookie is read from."""
+    """Somewhere the `_ncfa` cookie is kept."""
 
     def cookie(self) -> str | None:
         """Return the stored cookie, or None if none has been set."""
+        ...
+
+    def store(self, cookie: str) -> None:
+        """Replace the stored cookie."""
         ...
 
 
@@ -77,12 +84,21 @@ class ParameterStore:
     def cookie(self) -> str | None:
         return _read_parameter(self._name, self._client)
 
+    def store(self, cookie: str) -> None:
+        _ssm_client(self._client).put_parameter(
+            Name=self._name, Value=cookie, Type="SecureString", Overwrite=True
+        )
+
 
 class EnvStore:
     """Reads the cookie from GEOGUESSR_NCFA; used for local runs."""
 
     def cookie(self) -> str | None:
         return os.environ.get("GEOGUESSR_NCFA") or None
+
+    def store(self, cookie: str) -> None:
+        # The environment cannot be written back to `.env`, and the old value keeps working
+        LOGGER.info("Not storing the reissued cookie: running from the environment")
 
 
 def cookie_store() -> CookieStore:
