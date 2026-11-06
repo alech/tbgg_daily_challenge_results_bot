@@ -14,3 +14,6 @@ infra/node_modules/
 infra/cdk.out/
 infra/*.js
 infra/*.d.ts
+
+# Club XP snapshots pulled down from S3 (club-xp/YYYY-MM-DD/HHMMSSZ.json)
+[0-9][0-9][0-9][0-9][0-9][0-9]Z.json
