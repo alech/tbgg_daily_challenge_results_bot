@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Any
 
 MAX_ROUND_SCORE = 5000
+WORST_ROUND_SHOWN = 5
 
 
 @dataclass(frozen=True)
@@ -28,6 +29,26 @@ class RoundBest:
 
 
 @dataclass(frozen=True)
+class RoundEntry:
+    """One player's guess on one round."""
+
+    nick: str
+    score: int
+    distance_m: float
+    time_s: int
+
+
+@dataclass(frozen=True)
+class WorstRound:
+    """The round the club's best guess scored lowest on, with its strongest guesses."""
+
+    number: int
+    country: str
+    score: int
+    top: tuple[RoundEntry, ...]
+
+
+@dataclass(frozen=True)
 class Standing:
     """One player's overall placement on the day."""
 
@@ -45,6 +66,8 @@ class TeamResult:
     date: str
     rounds: tuple[RoundBest, ...]
     standings: tuple[Standing, ...]
+    worst_round: WorstRound | None = None
+    """None when the team maxed every round, since then no round was worst."""
 
     @property
     def player_count(self) -> int:
@@ -118,6 +141,45 @@ def _best_on_round(entries: list[dict[str, Any]], index: int) -> tuple[int, list
     return best_score, sorted(winners, key=lambda w: w.distance_m)
 
 
+def _round_entries(entries: list[dict[str, Any]], index: int) -> list[RoundEntry]:
+    """Every guess on one round, best first: highest score, then closest."""
+    ranked: list[RoundEntry] = []
+    for entry in entries:
+        guesses = entry["game"]["player"]["guesses"]
+        if index >= len(guesses):
+            continue  # stopped before this round, so has no guess to rank
+        guess = guesses[index]
+        ranked.append(
+            RoundEntry(
+                nick=entry["nick"],
+                score=int(guess["roundScoreInPoints"]),
+                distance_m=float(guess["distanceInMeters"]),
+                time_s=int(guess["time"]),
+            )
+        )
+    return sorted(ranked, key=lambda r: (-r.score, r.distance_m))
+
+
+def _worst_round(entries: list[dict[str, Any]], rounds: list[RoundBest]) -> WorstRound | None:
+    """The round where even the club's best guess scored lowest, if it fell short of 5000.
+
+    Shows the top five guesses on it, extended to anyone tied on score with the fifth so the
+    cutoff never splits players who did equally well. Two rounds equally bad: the earlier.
+    """
+    if not rounds:
+        return None
+    worst = min(rounds, key=lambda r: (r.score, r.number))
+    if worst.score >= MAX_ROUND_SCORE:
+        return None
+
+    ranked = _round_entries(entries, worst.number - 1)
+    top = ranked[:WORST_ROUND_SHOWN]
+    if top and len(ranked) > WORST_ROUND_SHOWN:
+        cutoff = top[-1].score
+        top += [r for r in ranked[WORST_ROUND_SHOWN:] if r.score == cutoff]
+    return WorstRound(number=worst.number, country=worst.country, score=worst.score, top=tuple(top))
+
+
 def compute(payload: dict[str, Any], date_str: str) -> TeamResult:
     """Compute the best-of-rounds team result for one day.
 
@@ -148,7 +210,12 @@ def compute(payload: dict[str, Any], date_str: str) -> TeamResult:
         )
         for e in sorted(entries, key=lambda e: int(e["totalScore"]), reverse=True)
     )
-    return TeamResult(date=date_str, rounds=tuple(rounds), standings=standings)
+    return TeamResult(
+        date=date_str,
+        rounds=tuple(rounds),
+        standings=standings,
+        worst_round=_worst_round(entries, rounds),
+    )
 
 
 def format_distance(meters: float) -> str:

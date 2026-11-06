@@ -158,3 +158,67 @@ def test_a_tie_for_the_best_solo_total_credits_everyone_sharing_it() -> None:
     assert sorted(s.nick for s in result.solo_leaders) == ["First", "Second"]
     assert result.solo_best_score == 25000
     assert result.gain_over_solo == 0
+
+
+def test_the_worst_round_is_where_the_club_s_best_guess_scored_lowest(
+    three_players: dict[str, Any],
+) -> None:
+    # round bests are 5000, 4000, 4900, 2500, 4900: round 4 is the worst
+    worst = scoring.compute(three_players, "2026-09-16").worst_round
+
+    assert worst is not None
+    assert (worst.number, worst.country, worst.score) == (4, "il", 2500)
+
+
+def test_the_worst_round_lists_its_best_five_guesses_best_first() -> None:
+    data = payload(*(entry(f"P{i}", [guess(5000), guess(1000 + i * 100, 50.0)]) for i in range(8)))
+    worst = scoring.compute(data, "2026-09-16").worst_round
+
+    assert worst is not None
+    assert [r.nick for r in worst.top] == ["P7", "P6", "P5", "P4", "P3"]
+    assert [r.score for r in worst.top] == [1700, 1600, 1500, 1400, 1300]
+
+
+def test_equal_scores_on_the_worst_round_are_ordered_by_distance() -> None:
+    data = payload(
+        entry("Far", [guess(3000, 800.0)]),
+        entry("Near", [guess(3000, 200.0)]),
+    )
+    worst = scoring.compute(data, "2026-09-16").worst_round
+
+    assert worst is not None
+    assert [r.nick for r in worst.top] == ["Near", "Far"]
+
+
+def test_a_tie_at_fifth_place_extends_the_list_rather_than_splitting_it() -> None:
+    scores = [4000, 3900, 3800, 3700, 3000, 3000, 3000, 2000]
+    data = payload(*(entry(f"P{i}", [guess(s)]) for i, s in enumerate(scores)))
+    worst = scoring.compute(data, "2026-09-16").worst_round
+
+    assert worst is not None
+    assert [r.score for r in worst.top] == [4000, 3900, 3800, 3700, 3000, 3000, 3000]
+
+
+def test_no_worst_round_when_the_team_maxed_every_round() -> None:
+    data = payload(entry("Alice", [guess(5000)] * 5), entry("Bob", [guess(100)] * 5))
+
+    assert scoring.compute(data, "2026-09-16").worst_round is None
+
+
+def test_two_equally_bad_rounds_report_the_earlier() -> None:
+    data = payload(entry("Alice", [guess(5000), guess(3000), guess(5000), guess(3000)], rounds=4))
+    worst = scoring.compute(data, "2026-09-16").worst_round
+
+    assert worst is not None
+    assert worst.number == 2
+
+
+def test_a_player_who_stopped_early_is_not_ranked_on_a_round_they_never_played() -> None:
+    data = payload(
+        entry("Finisher", [guess(5000), guess(5000), guess(2000)]),
+        entry("Quitter", [guess(5000), guess(5000)], rounds=3),
+    )
+    worst = scoring.compute(data, "2026-09-16").worst_round
+
+    assert worst is not None
+    assert [r.nick for r in worst.top] == ["Finisher"]

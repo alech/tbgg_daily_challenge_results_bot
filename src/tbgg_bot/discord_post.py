@@ -13,7 +13,15 @@ from dataclasses import dataclass
 
 import discord
 
-from tbgg_bot.scoring import MAX_ROUND_SCORE, RoundBest, Standing, TeamResult, flag, format_distance
+from tbgg_bot.scoring import (
+    MAX_ROUND_SCORE,
+    RoundBest,
+    Standing,
+    TeamResult,
+    WorstRound,
+    flag,
+    format_distance,
+)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -115,6 +123,28 @@ def _standings_blocks(standings: tuple[Standing, ...], total_budget: int) -> lis
     return blocks
 
 
+def _worst_round_field(worst: WorstRound) -> tuple[str, str]:
+    """Name and value for the section on the round the club scored lowest on."""
+    name = (
+        f"📉 The round we were worst in — R{worst.number} "
+        f"{flag(worst.country)} {worst.country.upper()}"
+    )
+    rank_width = len(str(len(worst.top)))
+    nick_width = max((len(r.nick) for r in worst.top), default=6)
+    lines = [
+        f"{rank:>{rank_width}}. {r.nick:<{nick_width}}  {r.score:>5,}  "
+        f"{format_distance(r.distance_m):>9}  {r.time_s:>4}s"
+        for rank, r in enumerate(worst.top, start=1)
+    ]
+    # Only a pathological pile-up of ties at the cutoff could overflow one field.
+    budget = FIELD_VALUE_LIMIT - FENCE_OVERHEAD
+    shown = len(lines)
+    while shown > 1 and len("\n".join([*lines[:shown], "+999 more tied"])) > budget:
+        shown -= 1
+    body = lines[:shown] + ([f"+{len(lines) - shown} more tied"] if shown < len(lines) else [])
+    return name, "```\n" + "\n".join(body) + "\n```"
+
+
 def build_embed(result: TeamResult) -> discord.Embed:
     """Render the day's team result as a Discord embed."""
     percentage = 100 * result.team_total / result.max_total if result.max_total else 0.0
@@ -132,10 +162,13 @@ def build_embed(result: TeamResult) -> discord.Embed:
     footer = f"{perfect}/{len(result.rounds)} rounds maxed by the team"
     plural = "s" if result.player_count != 1 else ""
     first_name = f"Leaderboard ({result.player_count} player{plural})"
+    worst = _worst_round_field(result.worst_round) if result.worst_round else None
 
     # The whole message shares one 6000-character pool. Spend it on the leaderboard first,
-    # holding back enough for the table, then give the table whatever is left over.
+    # holding back enough for the table, then give the table whatever is left over. The
+    # worst-round section is small and fixed-size, so it comes off the top.
     fixed = len(title) + len(footer) + len(header) + FENCE_OVERHEAD + len(first_name)
+    fixed += sum(len(part) for part in worst) if worst else 0
     blocks = _standings_blocks(result.standings, TOTAL_LIMIT - fixed - MIN_TABLE_BUDGET)
     spent = sum(len(b) + FENCE_OVERHEAD for b in blocks)
     table = _fit_table(
@@ -146,6 +179,8 @@ def build_embed(result: TeamResult) -> discord.Embed:
     embed = discord.Embed(
         title=title, description=f"{header}```\n{table}\n```", colour=EMBED_COLOUR
     )
+    if worst:
+        embed.add_field(name=worst[0], value=worst[1], inline=False)
     for index, block in enumerate(blocks):
         embed.add_field(
             # A zero-width space: a continued block needs no second heading.

@@ -33,6 +33,17 @@ def _discord_length(embed: dict[str, Any]) -> int:
     return total + len(embed.get("author", {}).get("name", ""))
 
 
+def _leaderboard(embed: dict[str, Any]) -> list[dict[str, Any]]:
+    """The leaderboard fields, found by name rather than position: other sections precede it."""
+    fields = embed.get("fields", [])
+    start = next(i for i, f in enumerate(fields) if f["name"].startswith("Leaderboard"))
+    return fields[start:]
+
+
+def _worst(embed: dict[str, Any]) -> dict[str, Any] | None:
+    return next((f for f in embed.get("fields", []) if "worst" in f["name"]), None)
+
+
 def test_the_embed_reports_the_team_total_and_the_day(three_players: dict[str, Any]) -> None:
     embed = _embed_dict(three_players)
     assert "2026-09-16" in embed["title"]
@@ -57,10 +68,10 @@ def test_a_large_club_is_split_across_fields_rather_than_truncated() -> None:
     data = payload(*(entry(f"LongNickname{i:02d}", [guess(5000 - i)] * 5) for i in range(40)))
     embed = _embed_dict(data)
 
-    leaderboard = "".join(f["value"] for f in embed["fields"])
+    leaderboard = "".join(f["value"] for f in _leaderboard(embed))
     for i in range(40):
         assert f"LongNickname{i:02d}" in leaderboard, "every player must appear somewhere"
-    assert len(embed["fields"]) > 1, "this leaderboard cannot fit in one field"
+    assert len(_leaderboard(embed)) > 1, "this leaderboard cannot fit in one field"
     for field in embed["fields"]:
         assert len(field["value"]) <= FIELD_VALUE_LIMIT
     assert _discord_length(embed) <= TOTAL_LIMIT
@@ -70,9 +81,9 @@ def test_a_forty_player_club_with_short_names_still_fits_one_field() -> None:
     data = payload(*(entry(f"P{i:02d}", [guess(5000 - i)] * 5) for i in range(40)))
     embed = _embed_dict(data)
 
-    assert len(embed["fields"]) == 1
+    assert len(_leaderboard(embed)) == 1
     for i in range(40):
-        assert f"P{i:02d}" in embed["fields"][0]["value"]
+        assert f"P{i:02d}" in _leaderboard(embed)[0]["value"]
 
 
 def test_a_realistic_club_all_tying_on_a_round_names_everyone() -> None:
@@ -137,7 +148,7 @@ def test_the_leaderboard_shows_each_player_s_5k_count() -> None:
         entry("Sharp", [guess(5000), guess(5000), guess(5000), guess(10), guess(10)]),
         entry("Steady", [guess(4000)] * 5),
     )
-    leaderboard = _embed_dict(data)["fields"][0]["value"]
+    leaderboard = _leaderboard(_embed_dict(data))[0]["value"]
 
     assert "3x5k" in leaderboard
     assert "0x5k" not in leaderboard, "a player with no 5k should get blank space, not a zero"
@@ -149,7 +160,7 @@ def test_the_5k_column_stays_aligned_when_some_players_have_none() -> None:
         entry("Steady", [guess(4000)] * 5),
         entry("Solid", [guess(5000), guess(4000), guess(4000), guess(4000), guess(4000)]),
     )
-    lines = _embed_dict(data)["fields"][0]["value"].strip("`\n").split("\n")
+    lines = _leaderboard(_embed_dict(data))[0]["value"].strip("`\n").split("\n")
 
     # every row puts the medal in the same column, blank 5k count or not
     assert len({line.index("🥇") for line in lines if "🥇" in line}) == 1
@@ -167,7 +178,7 @@ def test_the_footer_counts_rounds_the_team_maxed(three_players: dict[str, Any]) 
 
 def test_a_single_player_day_is_not_pluralised() -> None:
     data = payload(entry("Solo", [guess(4000)] * 5))
-    assert "1 player)" in _embed_dict(data)["fields"][0]["name"]
+    assert "1 player)" in _leaderboard(_embed_dict(data))[0]["name"]
 
 
 class _FakeHttp:
@@ -273,3 +284,46 @@ def test_the_summary_names_every_player_tied_for_best_solo() -> None:
 
     assert "Velocitxy" in header and "Kenaitan" in header
     assert "Behind" not in header
+
+
+def test_the_worst_round_section_names_the_round_and_its_best_guesses() -> None:
+    data = payload(
+        entry("Alice", [guess(5000), guess(3000, 900.0, 40)]),
+        entry("Bob", [guess(5000), guess(3200, 700.0, 25)]),
+        entry("Cara", [guess(5000), guess(1000, 9000.0, 90)]),
+    )
+    worst = _worst(_embed_dict(data))
+
+    assert worst is not None
+    assert "R2" in worst["name"]
+    rows = worst["value"].strip("`\n").split("\n")
+    assert [row.split()[1] for row in rows] == ["Bob", "Alice", "Cara"]
+    assert "3,200" in rows[0]
+
+
+def test_no_worst_round_section_when_the_team_maxed_every_round() -> None:
+    data = payload(entry("Alice", [guess(5000)] * 5), entry("Bob", [guess(4000)] * 5))
+    embed = _embed_dict(data)
+
+    assert _worst(embed) is None
+    assert embed["fields"][0]["name"].startswith("Leaderboard")
+
+
+def test_the_worst_round_section_comes_before_the_leaderboard() -> None:
+    data = payload(entry("Alice", [guess(4000)] * 5))
+    names = [f["name"] for f in _embed_dict(data)["fields"]]
+
+    assert "worst" in names[0]
+    assert names[1].startswith("Leaderboard")
+
+
+def test_a_huge_tie_on_the_worst_round_still_fits_its_field() -> None:
+    # 200 players all scoring 0 on round 1 extends the top five to everyone
+    data = payload(*(entry(f"Player{i:03d}", [guess(0)]) for i in range(200)))
+    embed = _embed_dict(data)
+    worst = _worst(embed)
+
+    assert worst is not None
+    assert len(worst["value"]) <= FIELD_VALUE_LIMIT
+    assert "more tied" in worst["value"]
+    assert _discord_length(embed) <= TOTAL_LIMIT
