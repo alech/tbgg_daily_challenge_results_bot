@@ -1,0 +1,631 @@
+<title>TBGG Ladder Watch</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&display=swap">
+<style>
+/* Layout: one reading column; summary, week picker, two stacked panels on a shared time axis,
+   the week-by-week margin chart, then the tables. */
+:root {
+  --surface: #fcfcfb;
+  --plane: #f6f6f3;
+  --ink: #0b0b0b;
+  --ink-2: #52514e;
+  --muted: #898781;
+  --grid: #e1e0d9;
+  --axis: #c3c2b7;
+  --ring: rgba(11, 11, 11, 0.10);
+  --tip: #ffffff;
+  --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #eda100;
+  --s5: #e87ba4; --s6: #008300; --s7: #6250d6;
+  --display: "Barlow Semi Condensed", "Arial Narrow", system-ui, sans-serif;
+  --sans: system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --surface: #1a1a19; --plane: #0f0f0e; --ink: #f0efec; --ink-2: #c3c2b7; --muted: #898781;
+    --grid: #2c2c2a; --axis: #383835; --ring: rgba(255, 255, 255, 0.10); --tip: #242423;
+    --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500;
+    --s5: #d55181; --s6: #008300; --s7: #9085e9;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --surface: #1a1a19; --plane: #0f0f0e; --ink: #f0efec; --ink-2: #c3c2b7; --muted: #898781;
+  --grid: #2c2c2a; --axis: #383835; --ring: rgba(255, 255, 255, 0.10); --tip: #242423;
+  --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500;
+  --s5: #d55181; --s6: #008300; --s7: #9085e9;
+}
+
+body {
+  background: var(--plane);
+  color: var(--ink);
+  font: 15px/1.5 var(--sans);
+  padding-block: 28px 48px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+main { max-width: 920px; margin: 0 auto; display: grid; gap: 20px; }
+
+header { display: grid; gap: 6px; }
+.eyebrow {
+  font: 600 12px/1.2 var(--sans); letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--muted);
+}
+h1 {
+  font: 700 clamp(28px, 5vw, 40px)/1.05 var(--display); letter-spacing: -0.01em;
+  margin: 0; text-wrap: balance;
+}
+.lede { margin: 4px 0 0; max-width: 64ch; color: var(--ink-2); }
+.lede strong { color: var(--ink); font-weight: 600; }
+
+.filters { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.filters label { font-size: 13px; color: var(--ink-2); }
+select {
+  font: 500 14px/1.2 var(--sans); color: var(--ink); background: var(--surface);
+  border: 1px solid var(--axis); border-radius: 6px; padding: 7px 30px 7px 10px; max-width: 100%;
+}
+select:focus-visible { outline: 2px solid var(--s1); outline-offset: 2px; }
+
+.legend { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: 0; padding: 0; list-style: none; }
+.legend li { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--ink-2); }
+.legend .key { width: 16px; height: 2px; border-radius: 1px; }
+.legend .rank { color: var(--muted); font-variant-numeric: tabular-nums; }
+.legend li.focus { color: var(--ink); font-weight: 600; }
+.legend li.focus .key { height: 3px; }
+
+.panel {
+  background: var(--surface); border: 1px solid var(--ring); border-radius: 10px;
+  padding: 16px 16px 8px; display: grid; gap: 4px; position: relative;
+}
+.panel h2 { font: 600 19px/1.2 var(--display); margin: 0; }
+.panel p { margin: 0; font-size: 13px; color: var(--muted); max-width: 72ch; }
+.panel p.read { color: var(--ink-2); }
+.panel p.read strong { color: var(--ink); font-weight: 600; }
+.chart { position: relative; touch-action: pan-y; }
+.chart svg { display: block; width: 100%; overflow: visible; }
+.chart svg:focus-visible, .chart svg .hit:focus-visible { outline: 2px solid var(--s1); outline-offset: 4px; border-radius: 4px; }
+.chart svg .hit:focus { outline: none; }
+.chart svg .hit:focus-visible + .bar, .chart svg .hit:hover + .bar { filter: brightness(1.12); }
+svg text { font-family: var(--sans); }
+.tick { fill: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.tick.current { fill: var(--ink); font-weight: 600; }
+.cue { fill: var(--muted); font-size: 11px; }
+.end { fill: var(--ink-2); font-size: 12px; }
+.end.focus { fill: var(--ink); font-weight: 700; }
+
+.tooltip {
+  position: absolute; top: 0; pointer-events: none; background: var(--tip); color: var(--ink);
+  border: 1px solid var(--ring); border-radius: 8px; padding: 8px 10px; font-size: 12px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12); min-width: 150px; z-index: 2;
+}
+.tooltip .when { color: var(--muted); margin-bottom: 4px; }
+.tooltip .big { font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.tooltip .row { display: grid; grid-template-columns: 12px 1fr auto; align-items: center; gap: 8px; }
+.tooltip .row .key { width: 12px; height: 2px; border-radius: 1px; }
+.tooltip .row .v { font-weight: 600; font-variant-numeric: tabular-nums; text-align: right; }
+.tooltip .row .n { color: var(--ink-2); grid-column: 2; grid-row: 1; }
+.tooltip .row.focus .n { color: var(--ink); font-weight: 600; }
+
+details { background: var(--surface); border: 1px solid var(--ring); border-radius: 10px; }
+summary { cursor: pointer; padding: 12px 16px; font: 600 16px/1.2 var(--display); }
+summary:focus-visible { outline: 2px solid var(--s1); outline-offset: -2px; border-radius: 10px; }
+.table-wrap { overflow-x: auto; padding: 0 16px 12px; }
+table { border-collapse: collapse; width: 100%; font-size: 13px; }
+th, td { padding: 7px 10px; text-align: right; border-bottom: 1px solid var(--grid); white-space: nowrap; }
+th { color: var(--muted); font-weight: 600; font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; }
+thead tr.weeks th { text-transform: none; letter-spacing: 0; font-size: 12px; color: var(--ink-2); text-align: center; border-bottom: 0; }
+td { font-variant-numeric: tabular-nums; }
+th.club, td.club { text-align: left; }
+tr.focus td { font-weight: 600; }
+td .sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 8px; vertical-align: -1px; }
+.note { font-size: 12px; color: var(--muted); max-width: 70ch; margin: 0; }
+</style>
+
+<main>
+  <header>
+    <div class="eyebrow" id="eyebrow">Club XP leaderboard</div>
+    <h1>TBGG and its six neighbours</h1>
+    <p class="lede" id="lede"></p>
+  </header>
+
+  <div class="filters">
+    <label for="week">Challenge week</label>
+    <select id="week"></select>
+  </div>
+
+  <ul class="legend" id="legend" aria-label="Clubs"></ul>
+
+  <section class="panel" aria-labelledby="total-h">
+    <h2 id="total-h">Total club XP</h2>
+    <p>The running total GeoGuessr ranks clubs by.</p>
+    <div class="chart" id="total"></div>
+  </section>
+
+  <section class="panel" aria-labelledby="gain-h">
+    <h2 id="gain-h">XP gained over the challenge week</h2>
+    <p id="gain-sub"></p>
+    <div class="chart" id="gain"></div>
+  </section>
+
+  <details>
+    <summary>Table view for the selected week</summary>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Rank</th><th class="club">Club</th><th>Total XP</th><th>Week's gain</th><th>Gap to TBGG</th></tr></thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+  </details>
+
+  <section class="panel" aria-labelledby="margin-h">
+    <h2 id="margin-h">TBGG's weekly margin</h2>
+    <p class="read" id="margin-read"></p>
+    <p>TBGG's XP gained in each challenge week minus each neighbour's. A bar above the line means TBGG out-gained that club.</p>
+    <div class="chart" id="margin"></div>
+  </section>
+
+  <details>
+    <summary>Weekly table</summary>
+    <div class="table-wrap">
+      <table>
+        <thead id="weekly-head"></thead>
+        <tbody id="weekly-rows"></tbody>
+      </table>
+    </div>
+  </details>
+
+  <p class="note" id="note"></p>
+</main>
+
+<script>
+const DATA = /*DATA*/null;
+const NS = "http://www.w3.org/2000/svg";
+const allTimes = DATA.times.map((t) => new Date(t));
+const WEEKS = DATA.weeks.map((w) => ({ ...w, start: new Date(w.start), end: new Date(w.end) }));
+const nf = new Intl.NumberFormat("en-GB");
+const fmt = (v) => nf.format(v);
+const signed = (v) => (v > 0 ? "+" : v < 0 ? "−" : "±") + nf.format(Math.abs(v));
+const colour = (c) => `var(--s${c.slot})`;
+const dayFmt = new Intl.DateTimeFormat("en-GB", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" });
+const dateFmt = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", timeZone: "UTC" });
+const whenFmt = new Intl.DateTimeFormat("en-GB", { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", hourCycle: "h23", timeZone: "UTC" });
+const weekName = (w) => `${dateFmt.format(w.start)} – ${w.complete ? dateFmt.format(w.end) : "now"}`;
+const weekGain = (c, w) => (c.xp[w.i1] == null || c.xp[w.i0] == null ? null : c.xp[w.i1] - c.xp[w.i0]);
+
+// The selected week's slice of the data; every per-week view reads these
+let week, times, clubs, focus, last;
+const gained = (c, i) => (c.xp[i] == null || c.xp[0] == null ? null : c.xp[i] - c.xp[0]);
+
+function selectWeek(k) {
+  week = WEEKS[k];
+  times = allTimes.slice(week.i0, week.i1 + 1);
+  last = times.length - 1;
+  clubs = DATA.clubs.map((c) => {
+    const pos = c.pos.slice(week.i0, week.i1 + 1);
+    return { ...c, xp: c.xp.slice(week.i0, week.i1 + 1), pos, rank: pos[last], startRank: pos[0] };
+  });
+  focus = clubs.find((c) => c.focus);
+}
+
+function el(tag, attrs = {}, parent) {
+  const node = document.createElementNS(NS, tag);
+  for (const [k, v] of Object.entries(attrs)) node.setAttribute(k, v);
+  if (parent) parent.appendChild(node);
+  return node;
+}
+function h(tag, cls, text, parent) {
+  const node = document.createElement(tag);
+  if (cls) node.className = cls;
+  if (text != null) node.textContent = text;
+  if (parent) parent.appendChild(node);
+  return node;
+}
+function fill(parent, parts) {
+  parent.textContent = "";
+  for (const [text, strong] of parts) parent.appendChild(strong ? h("strong", null, text) : document.createTextNode(text));
+}
+
+function niceStep(span, target) {
+  const raw = span / target;
+  const mag = 10 ** Math.floor(Math.log10(raw));
+  const norm = raw / mag;
+  return (norm < 1.5 ? 1 : norm < 3 ? 2 : norm < 7 ? 5 : 10) * mag;
+}
+function compact(v) {
+  if (Math.abs(v) < 1000) return String(v);
+  const k = v / 1000;
+  return (Number.isInteger(k) ? k : k.toFixed(1)) + "K";
+}
+function placeOf(values, mine) {
+  // Equal values share a place, so a tie is never reported as an outright lead
+  return values.filter((v) => v > mine).length + 1;
+}
+const ordinal = (place) => ["", "the most", "the second-most", "the third-most"][place] || `the ${place}th-most`;
+
+/* ---------- summary for the selected week ---------- */
+function summary() {
+  const mine = gained(focus, last);
+  const place = placeOf(clubs.map((c) => gained(c, last)), mine);
+  const tied = clubs.filter((c) => c !== focus && gained(c, last) === mine);
+  const tieText = tied.length ? `, tied with ${tied.map((c) => c.name).join(" and ")}` : "";
+  const leader = [...clubs].sort((a, b) => gained(b, last) - gained(a, last))[0];
+  const above = clubs.find((c) => c.rank === focus.rank - 1);
+  const below = clubs.find((c) => c.rank === focus.rank + 1);
+  const span = week.complete ? "that week" : "this week";
+
+  document.getElementById("eyebrow").textContent = week.complete
+    ? `Challenge week ${dayFmt.format(week.start)} – ${dayFmt.format(week.end)}, 11:00 UTC · complete`
+    : `Challenge week from ${dayFmt.format(week.start)}, 11:00 UTC · as of ${whenFmt.format(times[last])} UTC`;
+  const parts = week.complete
+    ? [["TBGG finished the week at ", false], [`#${focus.rank}`, true], [` with ${fmt(focus.xp[last])} XP, having gained `, false]]
+    : [["TBGG holds ", false], [`#${focus.rank}`, true], [` with ${fmt(focus.xp[last])} XP and has gained `, false]];
+  parts.push([signed(mine), true], [` ${span}, ${ordinal(place)} of these seven clubs${tieText}`, false]);
+  if (place > 1) parts.push([` behind ${leader.name} (${signed(gained(leader, last))})`, false]);
+  parts.push([". ", false]);
+  if (above) parts.push([`${above.tag} ${week.complete ? "was" : "is"} ${fmt(above.xp[last] - focus.xp[last])} XP ahead; `, false]);
+  if (below) parts.push([`${below.tag} ${week.complete ? "was" : "is"} ${fmt(focus.xp[last] - below.xp[last])} XP behind.`, false]);
+  const swaps = clubs.filter((c) => c.startRank != null && c.startRank !== c.rank);
+  if (swaps.length) {
+    parts.push([` Rank changes ${span}: ${swaps.map((c) => `${c.tag} #${c.startRank} → #${c.rank}`).join(", ")}.`, false]);
+  }
+  fill(document.getElementById("lede"), parts);
+  document.getElementById("gain-sub").textContent =
+    `Measured from the week's first snapshot, ${whenFmt.format(times[0])} UTC` +
+    (week.complete ? `, to its last, ${whenFmt.format(times[last])} UTC.` : ".");
+  document.getElementById("note").textContent =
+    `Hourly snapshots of GeoGuessr's club leaderboard, ${allTimes.length} across ${WEEKS.length} challenge ` +
+    `week${WEEKS.length === 1 ? "" : "s"}. A week runs from the first snapshot after Wednesday 11:00 UTC to the first ` +
+    `one after the next. Neighbours are the three clubs directly above and below TBGG at the latest snapshot, ` +
+    `kept the same for every week. All times UTC.`;
+}
+
+/* ---------- legend & selected-week table ---------- */
+function legend() {
+  const ul = document.getElementById("legend");
+  ul.textContent = "";
+  for (const c of [...clubs].sort((a, b) => a.rank - b.rank)) {
+    const li = h("li", c.focus ? "focus" : "", null, ul);
+    const key = h("span", "key", null, li);
+    key.style.background = colour(c);
+    h("span", "rank", `#${c.rank}`, li);
+    h("span", null, `${c.tag} · ${c.name}`, li);
+  }
+}
+function swatchCell(tr, c) {
+  const td = h("td", "club", null, tr);
+  const sw = h("span", "sw", null, td);
+  sw.style.background = colour(c);
+  td.appendChild(document.createTextNode(`${c.tag} · ${c.name}`));
+}
+function table() {
+  const tbody = document.getElementById("rows");
+  tbody.textContent = "";
+  for (const c of [...clubs].sort((a, b) => a.rank - b.rank)) {
+    const tr = h("tr", c.focus ? "focus" : "", null, tbody);
+    h("td", null, `#${c.rank}`, tr);
+    swatchCell(tr, c);
+    h("td", null, fmt(c.xp[last]), tr);
+    h("td", null, signed(gained(c, last)), tr);
+    h("td", null, c.focus ? "—" : signed(c.xp[last] - focus.xp[last]), tr);
+  }
+}
+
+/* ---------- week-by-week margin ---------- */
+const allFocus = DATA.clubs.find((c) => c.focus);
+const neighbours = DATA.clubs.filter((c) => !c.focus);
+const margin = (c, w) => {
+  const a = weekGain(allFocus, w), b = weekGain(c, w);
+  return a == null || b == null ? null : a - b;
+};
+
+function marginRead() {
+  const parts = [];
+  const latestComplete = [...WEEKS].reverse().find((w) => w.complete);
+  const current = WEEKS.find((w) => !w.complete);
+  const describe = (w, label, tense) => {
+    const beaten = neighbours.filter((c) => margin(c, w) > 0).length;
+    const place = placeOf(DATA.clubs.map((c) => weekGain(c, w)), weekGain(allFocus, w));
+    parts.push([`${label} (${weekName(w)}), TBGG ${tense} `, false], [signed(weekGain(allFocus, w)), true],
+      [`, more than ${beaten} of its six neighbours and ${ordinal(place)} of the seven. `, false]);
+  };
+  if (latestComplete) describe(latestComplete, "Last complete week", "gained");
+  if (current) describe(current, "This week so far", "has gained");
+  fill(document.getElementById("margin-read"), parts);
+}
+
+function weeklyTable() {
+  const head = document.getElementById("weekly-head");
+  head.textContent = "";
+  const top = h("tr", "weeks", null, head);
+  h("th", null, null, top);
+  for (const w of WEEKS) {
+    const th = h("th", null, weekName(w) + (w.complete ? "" : " (so far)"), top);
+    th.colSpan = 2;
+  }
+  const sub = h("tr", null, null, head);
+  h("th", "club", "Club", sub);
+  for (const _ of WEEKS) { h("th", null, "Gained", sub); h("th", null, "TBGG's margin", sub); }
+  const tbody = document.getElementById("weekly-rows");
+  tbody.textContent = "";
+  for (const c of [allFocus, ...neighbours]) {
+    const tr = h("tr", c.focus ? "focus" : "", null, tbody);
+    swatchCell(tr, c);
+    for (const w of WEEKS) {
+      const g = weekGain(c, w), m = margin(c, w);
+      h("td", null, g == null ? "—" : signed(g), tr);
+      h("td", null, c.focus || m == null ? "—" : signed(m), tr);
+    }
+  }
+}
+
+function barPath(x, w, y0, y1) {
+  // Rounded at the data end, square at the baseline
+  const hgt = Math.abs(y1 - y0);
+  const r = Math.min(4, w / 2, hgt);
+  if (y1 <= y0) return `M${x},${y0}V${y1 + r}Q${x},${y1} ${x + r},${y1}H${x + w - r}Q${x + w},${y1} ${x + w},${y1 + r}V${y0}Z`;
+  return `M${x},${y0}V${y1 - r}Q${x},${y1} ${x + r},${y1}H${x + w - r}Q${x + w},${y1} ${x + w},${y1 - r}V${y0}Z`;
+}
+
+function drawMargin() {
+  const host = document.getElementById("margin");
+  host.textContent = "";
+  const W = Math.max(300, host.clientWidth);
+  const narrow = W < 520;
+  const H = narrow ? 240 : 280;
+  const m = { top: 22, right: 8, bottom: 30, left: 48 };
+  const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, height: H, role: "group",
+    "aria-label": "TBGG's weekly XP margin over each neighbour. Tab to each bar for its values." }, host);
+  const tip = h("div", "tooltip", null, host);
+  tip.hidden = true;
+
+  const vals = WEEKS.flatMap((w) => neighbours.map((c) => margin(c, w))).filter((v) => v != null);
+  let lo = Math.min(0, ...vals), hi = Math.max(0, ...vals);
+  const step = niceStep(hi - lo || 100, narrow ? 4 : 5);
+  lo = Math.floor(lo / step) * step;
+  hi = Math.ceil(hi / step) * step;
+  if (lo === hi) hi = lo + step;
+  const y = (v) => m.top + (1 - (v - lo) / (hi - lo)) * (H - m.top - m.bottom);
+
+  for (let v = lo; v <= hi + step / 2; v += step) {
+    el("line", { x1: m.left, x2: W - m.right, y1: y(v), y2: y(v), stroke: "var(--grid)", "stroke-width": 1 }, svg);
+    const t = el("text", { x: m.left - 8, y: y(v) + 4, "text-anchor": "end", class: "tick" }, svg);
+    t.textContent = v === 0 ? "0" : (v > 0 ? "+" : "−") + compact(Math.abs(v));
+  }
+  el("line", { x1: m.left, x2: W - m.right, y1: y(0), y2: y(0), stroke: "var(--axis)", "stroke-width": 1 }, svg);
+  const up = el("text", { x: m.left, y: 12, class: "cue" }, svg);
+  up.textContent = "↑ TBGG gained more";
+
+  const groupW = (W - m.left - m.right) / WEEKS.length;
+  const gap = 2;
+  const barW = Math.max(6, Math.min(24, (groupW * 0.72 - gap * (neighbours.length - 1)) / neighbours.length));
+  const clusterW = barW * neighbours.length + gap * (neighbours.length - 1);
+  const selected = WEEKS.indexOf(week);
+
+  WEEKS.forEach((w, k) => {
+    const gx = m.left + groupW * k + (groupW - clusterW) / 2;
+    const label = el("text", { x: m.left + groupW * (k + 0.5), y: H - 8, "text-anchor": "middle",
+      class: k === selected ? "tick current" : "tick" }, svg);
+    label.textContent = weekName(w) + (w.complete ? "" : " (so far)");
+    neighbours.forEach((c, j) => {
+      const v = margin(c, w);
+      if (v == null) return;
+      const x = gx + j * (barW + gap);
+      const hit = el("rect", { x: x - gap / 2, y: m.top, width: barW + gap, height: H - m.top - m.bottom,
+        fill: "transparent", class: "hit", tabindex: "0",
+        "aria-label": `${weekName(w)}: TBGG ${signed(weekGain(allFocus, w))}, ${c.tag} ${signed(weekGain(c, w))}, margin ${signed(v)}` }, svg);
+      el("path", { d: barPath(x, barW, y(0), y(v)), fill: colour(c), class: "bar", "pointer-events": "none" }, svg);
+      const showTip = () => {
+        tip.textContent = "";
+        h("div", "when", weekName(w) + (w.complete ? "" : " (so far)"), tip);
+        h("div", "big", `${signed(v)} XP`, tip);
+        for (const club of [allFocus, c]) {
+          const row = h("div", club.focus ? "row focus" : "row", null, tip);
+          const key = h("span", "key", null, row);
+          key.style.background = colour(club);
+          h("span", "n", club.tag, row);
+          h("span", "v", signed(weekGain(club, w)), row);
+        }
+        tip.hidden = false;
+        const scale = svg.getBoundingClientRect().width / W;
+        const px = (x + barW / 2) * scale;
+        const tw = tip.offsetWidth;
+        tip.style.left = `${px + 12 + tw > host.clientWidth ? Math.max(0, px - 12 - tw) : px + 12}px`;
+      };
+      hit.addEventListener("pointerenter", showTip);
+      hit.addEventListener("focus", showTip);
+      hit.addEventListener("pointerleave", () => { tip.hidden = true; });
+      hit.addEventListener("blur", () => { tip.hidden = true; });
+    });
+  });
+}
+
+/* ---------- line charts for the selected week ---------- */
+const charts = [];
+
+function makeChart(id, value, label) {
+  const host = document.getElementById(id);
+  const chart = { host, value, label, svg: null, tip: null, x: null, y: null, cross: null, dots: [] };
+  charts.push(chart);
+  return chart;
+}
+
+function layoutLabels(items, minGap, lo, hi) {
+  // Spread end labels so none overlap, keeping each as close to its line end as possible
+  items.sort((a, b) => a.y - b.y);
+  items[0].ly = Math.max(items[0].y, lo);
+  for (let i = 1; i < items.length; i++) items[i].ly = Math.max(items[i].y, items[i - 1].ly + minGap);
+  if (items[items.length - 1].ly > hi) {
+    items[items.length - 1].ly = hi;
+    for (let i = items.length - 2; i >= 0; i--) items[i].ly = Math.min(items[i].ly, items[i + 1].ly - minGap);
+  }
+}
+
+function draw(chart) {
+  const { host, value } = chart;
+  host.textContent = "";
+  const W = Math.max(300, host.clientWidth);
+  const narrow = W < 520;
+  const H = narrow ? 240 : 300;
+  const m = { top: 12, right: narrow ? 64 : 84, bottom: 26, left: 44 };
+  const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, height: H, tabindex: "0", role: "img",
+    "aria-label": `${chart.label}. Use the left and right arrow keys to step through the hours.` }, host);
+  chart.svg = svg;
+
+  const vals = clubs.flatMap((c) => c.xp.map((_, i) => value(c, i))).filter((v) => v != null);
+  let lo = Math.min(...vals), hi = Math.max(...vals);
+  const step = niceStep(hi - lo || 1, narrow ? 4 : 5);
+  lo = Math.floor(lo / step) * step;
+  hi = Math.ceil(hi / step) * step;
+  const t0 = times[0].getTime(), t1 = times[last].getTime();
+  const x = (i) => m.left + ((times[i].getTime() - t0) / (t1 - t0 || 1)) * (W - m.left - m.right);
+  const y = (v) => m.top + (1 - (v - lo) / (hi - lo)) * (H - m.top - m.bottom);
+  chart.x = x; chart.y = y;
+
+  const grid = el("g", {}, svg);
+  for (let v = lo; v <= hi + step / 2; v += step) {
+    el("line", { x1: m.left, x2: W - m.right, y1: y(v), y2: y(v), stroke: v === lo ? "var(--axis)" : "var(--grid)", "stroke-width": 1 }, grid);
+    const t = el("text", { x: m.left - 8, y: y(v) + 4, "text-anchor": "end", class: "tick" }, grid);
+    t.textContent = compact(v);
+  }
+  // A tick at every UTC midnight, plus the week start itself
+  const ticks = [{ i: 0, text: narrow ? "Start" : "Week start" }];
+  times.forEach((t, i) => {
+    if (i > 0 && t.getUTCHours() === 0) ticks.push({ i, text: dayFmt.format(t).replace(/ \w+$/, "") });
+  });
+  for (const tk of ticks) {
+    const tx = x(tk.i);
+    if (tk.i > 0) el("line", { x1: tx, x2: tx, y1: m.top, y2: H - m.bottom, stroke: "var(--grid)", "stroke-width": 1 }, grid);
+    // Every other day on a phone, so the labels do not run together
+    if (narrow && tk.i > 0 && ticks.indexOf(tk) % 2 === 1 && ticks.length > 5) continue;
+    const t = el("text", { x: tx, y: H - 8, "text-anchor": tk.i === 0 ? "start" : "middle", class: "tick" }, grid);
+    t.textContent = tk.text;
+  }
+
+  // Draw the focus club last so it sits on top where lines cross
+  const order = [...clubs].sort((a, b) => a.focus - b.focus);
+  const lines = el("g", { fill: "none", "stroke-linejoin": "round", "stroke-linecap": "round" }, svg);
+  for (const c of order) {
+    let d = "", pen = false;
+    c.xp.forEach((_, i) => {
+      const v = value(c, i);
+      if (v == null) { pen = false; return; }
+      d += `${pen ? "L" : "M"}${x(i).toFixed(1)},${y(v).toFixed(1)}`;
+      pen = true;
+    });
+    el("path", { d, stroke: colour(c), "stroke-width": c.focus ? 3 : 2 }, lines);
+  }
+
+  // End markers with a surface ring, and direct labels with leader lines where they had to move
+  const items = clubs.filter((c) => value(c, last) != null).map((c) => ({ c, y: y(value(c, last)) }));
+  layoutLabels(items, 15, m.top + 4, H - m.bottom - 2);
+  const ends = el("g", {}, svg);
+  const ex = x(last);
+  for (const it of items) {
+    if (Math.abs(it.ly - it.y) > 1) {
+      el("path", { d: `M${ex + 6},${it.y} L${ex + 14},${it.ly}`, stroke: "var(--axis)", "stroke-width": 1, fill: "none" }, ends);
+    }
+    const t = el("text", { x: ex + 18, y: it.ly + 4, class: it.c.focus ? "end focus" : "end" }, ends);
+    t.textContent = it.c.tag;
+  }
+  for (const c of order) {
+    const v = value(c, last);
+    if (v != null) el("circle", { cx: ex, cy: y(v), r: 4, fill: colour(c), stroke: "var(--surface)", "stroke-width": 2 }, ends);
+  }
+
+  // Hover layer: a crosshair snapped to the nearest snapshot, and one dot per club
+  chart.cross = el("line", { y1: m.top, y2: H - m.bottom, stroke: "var(--muted)", "stroke-width": 1, visibility: "hidden" }, svg);
+  chart.dots = clubs.map((c) => el("circle", { r: 4, fill: colour(c), stroke: "var(--surface)", "stroke-width": 2, visibility: "hidden" }, svg));
+  el("rect", { x: m.left, y: m.top, width: W - m.left - m.right, height: H - m.top - m.bottom, fill: "transparent" }, svg);
+  chart.tip = h("div", "tooltip", null, host);
+  chart.tip.hidden = true;
+  chart.width = W;
+
+  const nearest = (px) => {
+    let best = 0;
+    for (let i = 1; i <= last; i++) if (Math.abs(x(i) - px) < Math.abs(x(best) - px)) best = i;
+    return best;
+  };
+  const toLocal = (ev) => (ev.clientX - svg.getBoundingClientRect().left) * (W / svg.getBoundingClientRect().width);
+  svg.addEventListener("pointermove", (ev) => show(nearest(toLocal(ev)), chart));
+  svg.addEventListener("pointerdown", (ev) => show(nearest(toLocal(ev)), chart));
+  svg.addEventListener("pointerleave", hide);
+  svg.addEventListener("blur", hide);
+  svg.addEventListener("focus", () => show(cursor ?? last, chart));
+  svg.addEventListener("keydown", (ev) => {
+    const delta = { ArrowLeft: -1, ArrowRight: 1, Home: -Infinity, End: Infinity }[ev.key];
+    if (delta == null) return;
+    ev.preventDefault();
+    show(Math.min(last, Math.max(0, (cursor ?? last) + delta)), chart);
+  });
+}
+
+let cursor = null;
+function show(i, active) {
+  cursor = i;
+  for (const ch of charts) {
+    const cx = ch.x(i);
+    ch.cross.setAttribute("x1", cx); ch.cross.setAttribute("x2", cx);
+    ch.cross.setAttribute("visibility", "visible");
+    clubs.forEach((c, k) => {
+      const v = ch.value(c, i);
+      const dot = ch.dots[k];
+      if (v == null) { dot.setAttribute("visibility", "hidden"); return; }
+      dot.setAttribute("cx", cx); dot.setAttribute("cy", ch.y(v));
+      dot.setAttribute("visibility", "visible");
+    });
+    ch.tip.hidden = ch !== active;
+  }
+  const tip = active.tip;
+  tip.textContent = "";
+  h("div", "when", `${whenFmt.format(times[i])} UTC`, tip);
+  const rows = clubs.map((c) => ({ c, v: active.value(c, i) })).filter((r) => r.v != null).sort((a, b) => b.v - a.v);
+  for (const { c, v } of rows) {
+    const row = h("div", c.focus ? "row focus" : "row", null, tip);
+    const key = h("span", "key", null, row);
+    key.style.background = colour(c);
+    h("span", "n", c.tag, row);
+    h("span", "v", active === charts[1] ? signed(v) : fmt(v), row);
+  }
+  const scale = active.svg.getBoundingClientRect().width / active.width;
+  const px = active.x(i) * scale;
+  const tw = tip.offsetWidth;
+  const hostW = active.host.clientWidth;
+  tip.style.left = `${px + 14 + tw > hostW ? Math.max(0, px - 14 - tw) : px + 14}px`;
+}
+function hide() {
+  cursor = null;
+  for (const ch of charts) {
+    ch.cross.setAttribute("visibility", "hidden");
+    ch.dots.forEach((d) => d.setAttribute("visibility", "hidden"));
+    ch.tip.hidden = true;
+  }
+}
+
+/* ---------- wiring ---------- */
+makeChart("total", (c, i) => c.xp[i], "Total club XP for TBGG and its six neighbours over the selected challenge week");
+makeChart("gain", gained, "XP gained since the selected challenge week started, for TBGG and its six neighbours");
+const redraw = () => { charts.forEach(draw); drawMargin(); };
+
+function render() {
+  summary();
+  legend();
+  table();
+  redraw();
+}
+
+const picker = document.getElementById("week");
+[...WEEKS].reverse().forEach((w) => {
+  const option = h("option", null, w.complete ? weekName(w) : `${weekName(w)} (in progress)`, picker);
+  option.value = String(WEEKS.indexOf(w));
+});
+picker.addEventListener("change", () => { selectWeek(Number(picker.value)); render(); });
+selectWeek(Number(picker.value));
+marginRead();
+weeklyTable();
+render();
+let pending = 0;
+new ResizeObserver(() => { cancelAnimationFrame(pending); pending = requestAnimationFrame(redraw); })
+  .observe(document.querySelector("main"));
+</script>
