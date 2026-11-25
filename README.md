@@ -50,6 +50,64 @@ only a gap in the series.
 aws s3 sync s3://<ClubXpBucketName>/club-xp ./club-xp   # pull the history down
 ```
 
+### Ladder Watch page
+
+Five minutes past every hour a Lambda rebuilds a chart of TBGG against the three clubs above
+and below it, over the last eight challenge weeks (Wednesday 11:00 UTC to Wednesday 11:00
+UTC). It is served from a private bucket that only CloudFront can read, at an unguessable
+path on `siteDomain` (the `ladderPath` setting; the full address is the `LadderUrl` stack
+output). The domain itself is public and its root is a placeholder. CloudFront can read named
+objects but not list the bucket, so a wrong path gets a 403, and the page asks search engines
+not to index it.
+
+`siteDomain` is delegated to a Route 53 zone in its own stack, `TbggDnsStack`, because the
+site's certificate is validated through that zone and so the delegation must be live first:
+
+1. `npx cdk deploy TbggDnsStack` and note its `NameServers` output.
+2. In the parent zone, add an `NS` record for the subdomain listing those four servers.
+3. Check it with `dig NS <siteDomain> +short`, then `npx cdk deploy TbggBotStack`.
+
+The distribution is on CloudFront's flat-rate **Free** plan, which has no overage charges, so
+a flood of requests cannot run up a bill. The plan requires a WAF web ACL and includes it; its
+one rule blocks any address making more than 300 requests in five minutes.
+
+Build the page locally with
+`uv run python -m tbgg_bot.ladder_page --bucket <ClubXpBucketName> --out ladder.html`.
+
+### Weekly summary
+
+At **Wednesday 11:05 UTC**, just after a challenge week closes, the bot posts TBGG's XP gain
+over the week against each neighbour's to every channel in `weeklyChannelIds`, with the title
+linking to the page. To try it without the club seeing, name the channels in the event:
+
+```bash
+aws lambda invoke --function-name <FunctionName> --cli-binary-format raw-in-base64-out \
+  --payload '{"action":"weekly","channels":["<test channel id>"]}' /dev/stdout
+```
+
+### Cost alerts
+
+An AWS Budget on the whole account's monthly spend emails `budgetEmail` past $10 and
+`budgetPagerEmail` past $500.
+
+### Private settings
+
+The repo is public, so the budget addresses, the site's domain and the page's path live in
+`infra/cdk.context.json`, which git ignores and CDK reads automatically:
+
+```json
+{
+  "budgetEmail": "you@example.com",
+  "budgetPagerEmail": "pager@example.com",
+  "siteDomain": "site.example.com",
+  "ladderPath": "ladder_<random>"
+}
+```
+
+Generate a path with `python3 -c 'import secrets; print("ladder_" + secrets.token_urlsafe(16))'`.
+Changing it moves the page; the old address keeps serving its last copy until you delete
+that object from the site bucket.
+
 ### Authentication
 
 The `_ncfa` session cookie is the only credential. GeoGuessr signs users in with emailed
@@ -74,6 +132,7 @@ The cookie parameter is the only thing the bot writes; the Discord token is read
 | | Destination |
 | --- | --- |
 | The daily result | every channel in `discordChannelIds` |
+| The weekly summary | every channel in `weeklyChannelIds` |
 | Failures, cookie expiry, a failed cookie refresh | a DM to `discordAlertUserId` |
 
 The club never sees a stack trace, and a broken run reaches someone who can fix it.
@@ -108,6 +167,9 @@ websocket: a Lambda invocation is too short-lived to justify the connect handsha
 | `src/tbgg_bot/discord_post.py` | Embed rendering and pycord posting |
 | `src/tbgg_bot/handler.py` | Lambda entry point |
 | `src/tbgg_bot/club_xp.py` | Hourly club XP snapshot to S3 |
+| `src/tbgg_bot/ladder.py` | Challenge weeks and neighbours, from the snapshots |
+| `src/tbgg_bot/ladder_page.py` | Builds and publishes the Ladder Watch page |
+| `src/tbgg_bot/weekly.py` | The weekly summary embed |
 | `infra/` | TypeScript CDK app |
 | `requirements-lambda.txt` | Pinned runtime deps, exported from `uv.lock` |
 

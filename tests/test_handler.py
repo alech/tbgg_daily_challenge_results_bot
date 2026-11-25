@@ -367,3 +367,67 @@ def test_no_refresh_is_attempted_when_the_result_could_not_be_built(
         handler.run("2026-09-16")
 
     assert store.stored == []
+
+
+WEEKLY_CHANNEL_ID = 77
+TEST_CHANNEL_ID = 78
+
+
+@pytest.fixture
+def week_summary(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
+    """Stand in for the S3 snapshots, recording which week was asked for."""
+    asked: list[Any] = []
+    monkeypatch.setenv("WEEKLY_CHANNEL_IDS", str(WEEKLY_CHANNEL_ID))
+    monkeypatch.setenv("CLUB_XP_BUCKET", "history")
+    monkeypatch.setenv("LADDER_URL", "https://ladder.example/")
+
+    def boundaries(_client: Any, bucket: str, week_start: dt.datetime) -> tuple[Any, Any]:
+        asked.append((bucket, week_start))
+        return "start", "end"
+
+    monkeypatch.setattr(handler.ladder, "s3_reader", lambda: None)
+    monkeypatch.setattr(handler.weekly, "boundary_snapshots", boundaries)
+    monkeypatch.setattr(handler.weekly, "summarise", lambda *_a: "summary")
+    monkeypatch.setattr(handler.weekly, "build_embed", lambda s, url: (s, url))
+    return asked
+
+
+def test_the_weekly_summary_covers_the_week_that_just_closed(
+    week_summary: list[Any], channel_posts: list[tuple[list[int], Any]]
+) -> None:
+    # Wednesday 11:05 UTC, five minutes after the week of 28 Oct closed
+    now = dt.datetime(2026, 11, 4, 11, 5, tzinfo=dt.UTC)
+
+    assert handler.post_weekly(now=now) == "2026-10-28"
+
+    assert week_summary == [("history", dt.datetime(2026, 10, 28, 11, 0, tzinfo=dt.UTC))]
+    channels, embed = channel_posts[0]
+    assert channels == [WEEKLY_CHANNEL_ID]
+    assert embed == ("summary", "https://ladder.example/")
+
+
+def test_a_test_run_goes_only_to_the_channels_it_names(
+    week_summary: list[Any], channel_posts: list[tuple[list[int], Any]]
+) -> None:
+    result = handler.lambda_handler({"action": "weekly", "channels": [str(TEST_CHANNEL_ID)]})
+
+    assert result["action"] == "weekly"
+    assert channel_posts[0][0] == [TEST_CHANNEL_ID], "the club channel must not get a test post"
+
+
+def test_a_failed_weekly_summary_is_dmed_not_posted(
+    monkeypatch: pytest.MonkeyPatch,
+    week_summary: list[Any],
+    channel_posts: list[tuple[list[int], Any]],
+    dms: list[tuple[int, Any]],
+) -> None:
+    def missing(*_a: Any) -> Any:
+        raise ValueError("No snapshot within two hours")
+
+    monkeypatch.setattr(handler.weekly, "boundary_snapshots", missing)
+
+    with pytest.raises(ValueError):
+        handler.post_weekly()
+
+    assert channel_posts == []
+    assert "No snapshot" in dms[0][1].to_dict()["description"]

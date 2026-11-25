@@ -7,10 +7,12 @@
   "context": {
     "discordChannelIds": "1549812038405198007,1460063550172168273",
     "discordAlertUserId": "537368326637355019",
+    "weeklyChannelIds": "1396163098594902048,1568763022632296549",
     "@aws-cdk/aws-lambda:recognizeLayerVersion": true,
     "@aws-cdk/core:checkSecretUsage": true,
     "@aws-cdk/aws-iam:minimizePolicies": true,
     "@aws-cdk/core:validateSnapshotRemovalPolicy": true,
-    "@aws-cdk/aws-lambda:useCdkManagedLogGroup": false
+    "@aws-cdk/aws-lambda:useCdkManagedLogGroup": false,
+    "@aws-cdk/core:defaultCrossStackReferences": "strong"
   }
 }

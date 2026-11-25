@@ -1,11 +1,13 @@
 """Lambda entry point.
 
-Two actions share one function:
+Three actions share one function:
 
 * `post` (the default, 00:05 UTC) publishes the finished result for the day that just ended,
   then stores the cookie GeoGuessr reissued so the stored session is always the newest.
 * `check` (20:00 Europe/Berlin) verifies the `_ncfa` cookie and DMs a warning if it has
   expired, leaving the evening free to paste a fresh one in before the nightly post.
+* `weekly` (Wednesday 11:05 UTC) compares TBGG's XP gain over the challenge week that just
+  closed with its neighbours', from the hourly snapshots in S3.
 
 Results go to the club channel. Anything the club should not see — failures, cookie
 expiry — goes to one person's DMs instead.
@@ -20,7 +22,7 @@ from typing import Any
 
 import discord
 
-from tbgg_bot import discord_post, geoguessr, scoring
+from tbgg_bot import discord_post, geoguessr, ladder, scoring, weekly
 from tbgg_bot.credentials import CookieStore, cookie_store, get_discord_token
 
 LOGGER = logging.getLogger()
@@ -28,6 +30,9 @@ LOGGER.setLevel(logging.INFO)
 
 DISCORD_TOKEN_PARAM_ENV = "DISCORD_TOKEN_PARAM"
 CHANNEL_ENV = "DISCORD_CHANNEL_IDS"
+WEEKLY_CHANNEL_ENV = "WEEKLY_CHANNEL_IDS"
+HISTORY_BUCKET_ENV = "CLUB_XP_BUCKET"
+LADDER_URL_ENV = "LADDER_URL"
 ALERT_USER_ENV = "DISCORD_ALERT_USER_ID"
 
 ALERT_COLOUR = 0xD9534F
@@ -61,12 +66,12 @@ def _required_id(name: str) -> int:
     return int(raw)
 
 
-def _channel_ids() -> list[int]:
+def _channel_ids(name: str = CHANNEL_ENV) -> list[int]:
     """The channels to post to, as a comma-separated list of IDs."""
-    raw = os.environ.get(CHANNEL_ENV, "")
+    raw = os.environ.get(name, "")
     ids = [int(part) for part in (p.strip() for p in raw.split(",")) if part]
     if not ids:
-        raise ValueError(f"{CHANNEL_ENV} is not set")
+        raise ValueError(f"{name} is not set")
     return ids
 
 
@@ -119,20 +124,59 @@ def run(date_str: str) -> None:
 
     outcome = discord_post.post(token, _channel_ids(), discord_post.build_embed(result))
     _refresh_cookie(token, store, cookie)
+    _report_delivery(token, outcome, date_str)
+
+
+def _report_delivery(token: str, outcome: discord_post.PostOutcome, what: str) -> None:
+    """DM about refused channels; fail the run only if no channel took the post."""
     if outcome.failed:
         # Getting the result out to the channels that do work matters more than a clean run,
         # so a refused channel is reported privately rather than aborting the post.
         detail = "\n".join(f"<#{cid}> — `{reason}`" for cid, reason in outcome.failed)
         _alert(
             token,
-            f"📪 Could not post to every channel — {date_str}",
+            f"📪 Could not post to every channel — {what}",
             f"Delivered to {len(outcome.posted)} of "
             f"{len(outcome.posted) + len(outcome.failed)} channels.\n\n{detail}\n\n"
             "Usually this means the bot has not been invited to that server, or lacks "
             "**View Channel** / **Send Messages** / **Embed Links** there.",
         )
     if outcome.all_failed:
-        raise RuntimeError(f"No channel accepted the result for {date_str}")
+        raise RuntimeError(f"No channel accepted the result for {what}")
+
+
+def last_week_start(now: dt.datetime | None = None) -> dt.datetime:
+    """The start of the most recent challenge week that has fully closed."""
+    return ladder.week_start_at_or_before(now or dt.datetime.now(dt.UTC)) - ladder.WEEK
+
+
+def post_weekly(channels: list[int] | None = None, now: dt.datetime | None = None) -> str:
+    """Post the summary of the challenge week that just closed. Returns its start date.
+
+    `channels` overrides WEEKLY_CHANNEL_IDS, so a test run can go to a test channel only.
+    """
+    token = _discord_token()
+    week_start = last_week_start(now)
+    label = f"week of {week_start.date().isoformat()}"
+    try:
+        bucket = os.environ.get(HISTORY_BUCKET_ENV)
+        if not bucket:
+            raise ValueError(f"{HISTORY_BUCKET_ENV} is not set")
+        start, end = weekly.boundary_snapshots(ladder.s3_reader(), bucket, week_start)
+        summary = weekly.summarise(start, end, week_start)
+    except Exception as error:
+        LOGGER.exception("Failed to build the weekly summary for the %s", label)
+        _alert(
+            token,
+            f"⚠️ TBGG weekly summary — {label}",
+            f"Could not post the weekly summary.\n```\n{type(error).__name__}: {error}\n```",
+        )
+        raise
+
+    embed = weekly.build_embed(summary, os.environ.get(LADDER_URL_ENV) or None)
+    outcome = discord_post.post(token, channels or _channel_ids(WEEKLY_CHANNEL_ENV), embed)
+    _report_delivery(token, outcome, label)
+    return week_start.date().isoformat()
 
 
 def check_cookie() -> bool:
@@ -161,6 +205,10 @@ def lambda_handler(event: dict[str, Any], _context: object = None) -> dict[str, 
     if action == "check":
         LOGGER.info("Running cookie health check")
         return {"status": "ok", "action": action, "cookieValid": check_cookie()}
+    if action == "weekly":
+        channels = [int(c) for c in payload.get("channels") or []]
+        LOGGER.info("Posting the weekly summary")
+        return {"status": "ok", "action": action, "weekStart": post_weekly(channels or None)}
 
     date_str = str(payload.get("date") or previous_utc_day())
     LOGGER.info("Posting club daily challenge result for %s", date_str)

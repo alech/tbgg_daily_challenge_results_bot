@@ -14,9 +14,9 @@ infra/node_modules/
 infra/cdk.out/
 infra/*.js
 infra/*.d.ts
+# Per-deployer context such as the budget alert addresses; the repo is public
+infra/cdk.context.json
 
 # Club XP snapshots pulled down from S3 (club-xp/YYYY-MM-DD/HHMMSSZ.json)
 [0-9][0-9][0-9][0-9][0-9][0-9]Z.json
 
-# Ladder Watch snapshot cache and built page (tools/ladder/build.py)
-.cache/
